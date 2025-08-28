@@ -34,7 +34,9 @@ const GET_ALL_PRODUCTS_QUERY = `
 `;
 
 export async function getAllShopifyProducts(): Promise<Product[]> {
+    console.log('Starting to fetch all Shopify products.');
     if (!process.env.SHOPIFY_SHOP_NAME || !process.env.SHOPIFY_API_ACCESS_TOKEN) {
+        console.error("Shopify environment variables are not set.");
         throw new Error("Shopify environment variables are not set. Please create a .env.local file.");
     }
     
@@ -62,11 +64,15 @@ export async function getAllShopifyProducts(): Promise<Product[]> {
     let hasNextPage = true;
     let cursor: string | null = null;
     let requestCount = 0;
+    let pageCount = 0;
 
     while(hasNextPage) {
         try {
+            pageCount++;
+            console.log(`Fetching page ${pageCount} of products from Shopify...`);
             // Add a delay every 2 requests to respect the rate limit bucket restore rate
             if (requestCount > 0 && requestCount % 2 === 0) {
+                console.log('Pausing for 1 second to respect rate limits...');
                 await sleep(1000); 
             }
 
@@ -81,9 +87,10 @@ export async function getAllShopifyProducts(): Promise<Product[]> {
             requestCount++;
             
             if (response.body.errors) {
+              console.error('GraphQL Errors:', response.body.errors);
               // Check for specific throttling errors
               if (response.body.errors.some((e:any) => e.message.includes('Throttled'))) {
-                 console.log("Throttled by Shopify, waiting before retrying...");
+                 console.log("Throttled by Shopify, waiting 5 seconds before retrying...");
                  await sleep(5000); // Wait 5 seconds if we get a throttled error
                  continue; // Retry the same request
               }
@@ -91,6 +98,7 @@ export async function getAllShopifyProducts(): Promise<Product[]> {
             }
 
             const productEdges = response.body.data.products.edges;
+            console.log(`Received ${productEdges.length} products on this page.`);
 
             for (const edge of productEdges) {
                 const variant = edge.node.variants.edges[0]?.node;
@@ -105,18 +113,20 @@ export async function getAllShopifyProducts(): Promise<Product[]> {
             
             hasNextPage = response.body.data.products.pageInfo.hasNextPage;
             cursor = response.body.data.products.pageInfo.endCursor;
+            console.log(`hasNextPage is ${hasNextPage}. Total products fetched so far: ${products.length}`);
 
         } catch (error) {
+            console.error("Error during Shopify product fetch loop:", error);
             if (error instanceof Error && error.message.includes('Throttled')) {
-                console.log("Throttled by Shopify, waiting before retrying...");
+                console.log("Caught throttled error, waiting 5 seconds before retrying...");
                 await sleep(5000); // Wait 5 seconds
                 // The loop will continue and retry
             } else {
-                console.error("Error fetching Shopify products:", error);
                 throw error; // Re-throw other errors
             }
         }
     }
     
+    console.log(`Finished fetching all Shopify products. Total: ${products.length}`);
     return products;
 }

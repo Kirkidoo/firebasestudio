@@ -17,14 +17,18 @@ async function getFtpClient(data: FormData) {
   // client.ftp.verbose = true;
   try {
     // First, try a secure connection
+    console.log('Attempting secure FTP connection...');
     await client.access({ host, user, password, secure: true });
+    console.log('Secure FTP connection successful.');
   } catch(secureErr) {
     console.log("Secure FTP connection failed. Trying non-secure.", secureErr);
     // If secure fails, close the potentially broken connection and try non-secure
     client.close(); 
     const nonSecureClient = new Client();
     try {
+        console.log('Attempting non-secure FTP connection...');
         await nonSecureClient.access({ host, user, password, secure: false });
+        console.log('Non-secure FTP connection successful.');
         return nonSecureClient;
     } catch (nonSecureErr) {
         console.error("Non-secure FTP connection also failed.", nonSecureErr);
@@ -42,19 +46,27 @@ export async function connectToFtp(data: FormData) {
 }
 
 export async function listCsvFiles(data: FormData) {
+  console.log('Listing CSV files from FTP...');
   const client = await getFtpClient(data);
   try {
     await client.cd(FTP_DIRECTORY);
     const files = await client.list();
-    return files
+    const csvFiles = files
       .filter(file => file.name.toLowerCase().endsWith('.csv'))
       .map(file => file.name);
-  } finally {
+    console.log(`Found ${csvFiles.length} CSV files.`);
+    return csvFiles;
+  } catch(error) {
+    console.error('Failed to list CSV files:', error);
+    throw error;
+  }
+  finally {
     client.close();
   }
 }
 
 async function parseCsvFromStream(stream: Readable): Promise<Product[]> {
+    console.log('Parsing CSV from stream...');
     const records: Product[] = [];
     const parser = stream.pipe(parse({
         columns: true,
@@ -73,17 +85,21 @@ async function parseCsvFromStream(stream: Readable): Promise<Product[]> {
             });
         }
     }
+    console.log(`Parsed ${records.length} products from CSV.`);
     return records;
 }
 
 export async function runAudit(csvFileName: string, ftpData: FormData): Promise<{ report: AuditResult[], summary: { matched: number, mismatched: number, newInShopify: number, onlyInCsv: number } }> {
+  console.log(`Starting audit for file: ${csvFileName}`);
   
   // 1. Fetch and parse CSV from FTP
   const client = await getFtpClient(ftpData);
   let csvProducts: Product[] = [];
 
   try {
+    console.log('Navigating to FTP directory:', FTP_DIRECTORY);
     await client.cd(FTP_DIRECTORY);
+    console.log(`Downloading file: ${csvFileName}`);
     
     // Create a temporary in-memory writable stream
     const chunks: any[] = [];
@@ -95,6 +111,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
     });
 
     await client.downloadTo(writable, csvFileName);
+    console.log('File downloaded successfully.');
     
     // Once download is complete, create a readable stream from the chunks
     const readable = Readable.from(Buffer.concat(chunks));
@@ -104,18 +121,24 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
     console.error("Failed to download or parse CSV from FTP", error);
     throw new Error(`Could not download or process file '${csvFileName}' from FTP.`);
   } finally {
-      if (client.closed === false) {
+      if (!client.closed) {
         client.close();
+        console.log('FTP client closed.');
       }
   }
   
   const csvProductMap = new Map(csvProducts.map(p => [p.sku, p]));
+  console.log(`Created map with ${csvProductMap.size} products from CSV.`);
 
   // 2. Fetch products from Shopify
+  console.log('Fetching products from Shopify...');
   const shopifyProducts = await getAllShopifyProducts();
   const shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
+  console.log(`Created map with ${shopifyProductMap.size} products from Shopify.`);
+
 
   // 3. Run audit logic
+  console.log('Running audit comparison logic...');
   const allSkus = new Set([...csvProductMap.keys(), ...shopifyProductMap.keys()]);
   const report: AuditResult[] = [];
   const summary = { matched: 0, mismatched: 0, newInShopify: 0, onlyInCsv: 0 };
@@ -142,6 +165,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   }
   
   report.sort((a, b) => a.sku.localeCompare(b.sku));
+  console.log('Audit comparison complete. Summary:', summary);
 
   return { report, summary };
 }
