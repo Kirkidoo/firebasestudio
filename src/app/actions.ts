@@ -13,7 +13,7 @@ async function getFtpClient(data: FormData) {
   const user = data.get('username') as string;
   const password = data.get('password') as string;
   
-  const client = new Client();
+  const client = new Client(30000); // 30 second timeout
   // client.ftp.verbose = true;
   try {
     // First, try a secure connection
@@ -24,7 +24,7 @@ async function getFtpClient(data: FormData) {
     console.log("Secure FTP connection failed. Trying non-secure.", secureErr);
     // If secure fails, close the potentially broken connection and try non-secure
     client.close(); 
-    const nonSecureClient = new Client();
+    const nonSecureClient = new Client(30000); // 30 second timeout
     try {
         console.log('Attempting non-secure FTP connection...');
         await nonSecureClient.access({ host, user, password, secure: false });
@@ -61,7 +61,9 @@ export async function listCsvFiles(data: FormData) {
     throw error;
   }
   finally {
-    client.close();
+    if (!client.closed) {
+      client.close();
+    }
   }
 }
 

@@ -2,7 +2,6 @@
 
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
 import '@shopify/shopify-api/adapters/node';
-import 'dotenv/config';
 import { Product } from '@/lib/types';
 
 // Helper function to introduce a delay
@@ -89,7 +88,7 @@ export async function getAllShopifyProducts(): Promise<Product[]> {
             if (response.body.errors) {
               console.error('GraphQL Errors:', response.body.errors);
               // Check for specific throttling errors
-              if (response.body.errors.some((e:any) => e.message.includes('Throttled'))) {
+              if (JSON.stringify(response.body.errors).includes('Throttled')) {
                  console.log("Throttled by Shopify, waiting 5 seconds before retrying...");
                  await sleep(5000); // Wait 5 seconds if we get a throttled error
                  continue; // Retry the same request
