@@ -6,6 +6,8 @@ import { Readable } from 'stream';
 import { parse } from 'csv-parse';
 import { getAllShopifyProducts } from '@/lib/shopify';
 
+const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
+
 async function getFtpClient(data: FormData) {
   const host = data.get('host') as string;
   const user = data.get('username') as string;
@@ -42,6 +44,7 @@ export async function connectToFtp(data: FormData) {
 export async function listCsvFiles(data: FormData) {
   const client = await getFtpClient(data);
   try {
+    await client.cd(FTP_DIRECTORY);
     const files = await client.list();
     return files
       .filter(file => file.name.toLowerCase().endsWith('.csv'))
@@ -79,6 +82,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   const client = await getFtpClient(ftpData);
   const csvStream = new Readable();
   try {
+    await client.cd(FTP_DIRECTORY);
     await client.downloadTo(csvStream, csvFileName);
   } catch (error) {
     client.close();
