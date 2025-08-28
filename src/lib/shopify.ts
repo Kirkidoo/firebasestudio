@@ -1,3 +1,5 @@
+'use server';
+
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
 import '@shopify/shopify-api/adapters/node';
 import 'dotenv/config';
