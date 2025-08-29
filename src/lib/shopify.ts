@@ -197,14 +197,14 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                             price: parseFloat(variant.price),
                             inventory: variant.inventoryQuantity,
                             descriptionHtml: productEdge.node.bodyHtml,
-                            productType: null, // from CSV
-                            vendor: null, // from CSV
-                            compareAtPrice: null, // from CSV
-                            costPerItem: null, // from CSV
-                            barcode: null, // from CSV
-                            weight: null, // from CSV
-                            mediaUrl: null, // from CSV
-                            category: null, // from CSV
+                            productType: null,
+                            vendor: null, 
+                            compareAtPrice: null,
+                            costPerItem: null,
+                            barcode: null,
+                            weight: null,
+                            mediaUrl: null,
+                            category: null,
                         });
                     }
                 }
@@ -247,6 +247,8 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
     const sanitizedDescription = firstVariant.descriptionHtml
         ? firstVariant.descriptionHtml.replace(/<h1/gi, '<h2').replace(/<\/h1>/gi, '</h2>')
         : '';
+        
+    const isSingleVariantProduct = productVariants.length === 1 && firstVariant.name.includes('Default Title');
 
     const restVariants = productVariants.map(p => ({
         price: p.price,
@@ -257,7 +259,7 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
         grams: p.weight,
         inventory_management: 'shopify',
         inventory_policy: 'deny',
-        option1: p.sku // Simplified option handling
+        option1: isSingleVariantProduct ? 'Default Title' : p.sku
     }));
 
     // Consolidate unique images
@@ -273,10 +275,15 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
             product_type: firstVariant.productType,
             status: 'active',
             variants: restVariants,
-            options: [{ name: "SKU" }], // Simplified option handling
             images: restImages,
         }
     };
+    
+    // Only add options if it's NOT a single-variant product with a default title
+    if (!isSingleVariantProduct) {
+      productPayload.product.options = [{ name: "SKU" }];
+    }
+
 
     console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
 
@@ -299,7 +306,7 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
         }));
 
         return { 
-            id: createdProduct.admin_graphql_api_id, 
+            id: `gid://shopify/Product/${createdProduct.id}`, 
             variants: createdVariants,
         };
     } catch(error: any) {
@@ -505,3 +512,5 @@ export async function linkProductToCollection(productGid: string, collectionGid:
         // Don't throw, just warn, as this is a post-creation task.
     }
 }
+
+    
