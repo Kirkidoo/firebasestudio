@@ -231,38 +231,36 @@ export async function createProduct(product: Product): Promise<{id: string, vari
             variants: [{
                 price: product.price,
                 sku: product.sku,
-                inventory_policy: product.inventory === null ? 'continue' : 'deny',
+                inventory_management: product.inventory === null ? null : 'shopify',
             }],
         }
     };
 
     console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
 
-    const response: any = await shopifyClient.post({
-        path: 'products',
-        data: productPayload,
-    });
+    try {
+        const response: any = await shopifyClient.post({
+            path: 'products',
+            data: productPayload,
+        });
 
-    if (!response.ok) {
-        console.error("Error creating product via REST:", response.body);
-        throw new Error(`Failed to create product. Status: ${response.status} Body: ${JSON.stringify(response.body)}`);
-    }
-    
-    const createdProduct = response.body.product;
-    const variant = createdProduct?.variants[0];
+        const createdProduct = response.body.product;
+        const variant = createdProduct?.variants[0];
 
-    if (!createdProduct || !variant) {
-        console.error("Incomplete REST creation response:", response.body);
-        throw new Error('Product creation did not return the expected product data.');
+        if (!createdProduct || !variant) {
+            console.error("Incomplete REST creation response:", response.body);
+            throw new Error('Product creation did not return the expected product data.');
+        }
+        
+        return { 
+            id: `gid://shopify/Product/${createdProduct.id}`, 
+            variantId: `gid://shopify/ProductVariant/${variant.id}`,
+            inventoryItemId: `gid://shopify/InventoryItem/${variant.inventory_item_id}`,
+        };
+    } catch(error: any) {
+        console.error("Error creating product via REST:", error);
+        throw new Error(`Failed to create product. Status: ${error.response?.statusCode} Body: ${JSON.stringify(error.response?.body)}`);
     }
-    
-    // The REST API returns numeric IDs, but the rest of the app uses GraphQL GIDs.
-    // For the optimistic UI update to work, we need to return something. We will return the GIDs.
-    return { 
-        id: `gid://shopify/Product/${createdProduct.id}`, 
-        variantId: `gid://shopify/ProductVariant/${variant.id}`,
-        inventoryItemId: `gid://shopify/InventoryItem/${variant.inventory_item_id}`,
-    };
 }
 
 
@@ -270,7 +268,6 @@ export async function addProductVariant(product: Product): Promise<{id: string, 
     const shopifyClient = getShopifyRestClient();
     const graphQLClient = getShopifyGraphQLClient();
 
-    // 1. Find the parent product GID using the handle with GraphQL
     const productResponse: any = await graphQLClient.query({
         data: {
             query: GET_PRODUCT_ID_BY_HANDLE_QUERY,
@@ -282,39 +279,37 @@ export async function addProductVariant(product: Product): Promise<{id: string, 
     if (!productGid) {
         throw new Error(`Could not find product with handle ${product.handle} to add variant to.`);
     }
-    // Extract numeric ID from GID for REST API
     const productId = productGid.split('/').pop();
 
-    // 2. Create the new variant using REST API
     const variantPayload = {
       variant: {
         price: product.price,
         sku: product.sku,
-        inventory_policy: 'deny',
+        inventory_management: product.inventory === null ? null : 'shopify',
       }
     }
     
     console.log(`Adding product variant to product ID ${productId} with REST payload:`, variantPayload);
 
-    const response: any = await shopifyClient.post({
-        path: `products/${productId}/variants`,
-        data: variantPayload,
-    });
+    try {
+        const response: any = await shopifyClient.post({
+            path: `products/${productId}/variants`,
+            data: variantPayload,
+        });
 
-    if (!response.ok) {
-        console.error("Error adding variant via REST:", response.body);
-        throw new Error(`Failed to add variant. Status: ${response.status} Body: ${JSON.stringify(response.body)}`);
+        const createdVariant = response.body.variant;
+        if (!createdVariant) {
+            throw new Error('Variant creation did not return the expected variant data.');
+        }
+
+        return { 
+            id: `gid://shopify/ProductVariant/${createdVariant.id}`, 
+            inventoryItemId: `gid://shopify/InventoryItem/${createdVariant.inventory_item_id}`,
+        };
+    } catch (error: any) {
+         console.error("Error adding variant via REST:", error);
+         throw new Error(`Failed to add variant. Status: ${error.response?.statusCode} Body: ${JSON.stringify(error.response?.body)}`);
     }
-
-    const createdVariant = response.body.variant;
-    if (!createdVariant) {
-        throw new Error('Variant creation did not return the expected variant data.');
-    }
-
-    return { 
-        id: `gid://shopify/ProductVariant/${createdVariant.id}`, 
-        inventoryItemId: `gid://shopify/InventoryItem/${createdVariant.inventory_item_id}`,
-    };
 }
 
 
@@ -398,3 +393,5 @@ export async function updateInventoryLevel(inventoryItemId: string, quantity: nu
     }
     return response.body.data?.inventorySetOnHandQuantities?.inventoryAdjustmentGroup;
 }
+
+    
