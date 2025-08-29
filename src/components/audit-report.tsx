@@ -1,14 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { AuditResult, AuditStatus } from '@/lib/types';
+import { AuditResult, AuditStatus, DuplicateSku, MismatchDetail } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Copy } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 type FilterType = 'all' | AuditStatus;
 
@@ -21,20 +22,29 @@ const statusConfig: { [key in AuditStatus]: { icon: React.ElementType, text: str
 
 const getHandle = (item: AuditResult) => item.csvProduct?.handle || item.shopifyProduct?.handle || `no-handle-${item.sku}`;
 
-const MismatchField = ({ csvValue, shopifyValue }: { csvValue: string | number, shopifyValue: string | number }) => {
-    const isMismatched = csvValue !== shopifyValue;
-    if (!isMismatched) {
-        return <>{shopifyValue}</>;
-    }
+const MismatchDetails = ({ mismatches }: { mismatches: MismatchDetail[] }) => {
     return (
-        <div className="flex flex-col">
-            <span className="text-red-500 line-through">{shopifyValue}</span>
-            <span className="text-green-500">{csvValue}</span>
+        <div className="flex flex-col gap-2 mt-2">
+            {mismatches.map((mismatch, index) => (
+                <div key={index} className="flex items-center gap-2 text-xs p-2 rounded-md bg-yellow-50 dark:bg-yellow-900/20">
+                     <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
+                    <div className="flex-grow">
+                        <span className="font-semibold capitalize">{mismatch.field.replace('_', ' ')}: </span>
+                        <span className="text-red-500 line-through mr-2">{mismatch.shopifyValue ?? 'N/A'}</span>
+                        <span className="text-green-500">{mismatch.csvValue ?? 'N/A'}</span>
+                    </div>
+                     <Button size="sm" variant="ghost" className="h-7">
+                        <Wrench className="mr-1.5 h-3.5 w-3.5" />
+                        Fix
+                    </Button>
+                </div>
+            ))}
         </div>
     );
 };
 
-export default function AuditReport({ data, summary, onReset }: { data: AuditResult[], summary: any, onReset: () => void }) {
+
+export default function AuditReport({ data, summary, duplicates, onReset }: { data: AuditResult[], summary: any, duplicates: DuplicateSku[], onReset: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
 
   const filteredData = data.filter(item => filter === 'all' || item.status === filter);
@@ -53,10 +63,13 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
       Handle: getHandle(item),
       SKU: item.sku,
       Status: statusConfig[item.status].text,
+      Mismatched_Fields: item.mismatches.map(m => m.field).join(', '),
       CSV_Product_Name: item.csvProduct?.name || 'N/A',
-      CSV_Price: item.csvProduct ? item.csvProduct.price.toFixed(2) : 'N/A',
       Shopify_Product_Name: item.shopifyProduct?.name || 'N/A',
+      CSV_Price: item.csvProduct ? item.csvProduct.price.toFixed(2) : 'N/A',
       Shopify_Price: item.shopifyProduct ? item.shopifyProduct.price.toFixed(2) : 'N/A',
+      CSV_Inventory: item.csvProduct?.inventory ?? 'N/A',
+      Shopify_Inventory: item.shopifyProduct?.inventory ?? 'N/A',
     }));
     downloadCsv(csvData, 'shopsync-audit-report.csv');
   };
@@ -68,6 +81,18 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
         <CardDescription>
           Comparison of product data between your CSV file (source of truth) and Shopify. Products are grouped by handle.
         </CardDescription>
+         {duplicates.length > 0 && (
+            <Alert variant="destructive" className="mt-4">
+                <Siren className="h-4 w-4" />
+                <AlertTitle>Duplicate SKUs Found in CSV!</AlertTitle>
+                <AlertDescription>
+                    The following SKUs are duplicated in your source CSV file, which can cause incorrect audit results. Please fix them in the source file.
+                    <div className="mt-2 text-xs font-mono">
+                        {duplicates.map(d => `${d.sku} (x${d.count})`).join(', ')}
+                    </div>
+                </AlertDescription>
+            </Alert>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <CheckCircle2 className="w-6 h-6 text-green-500 shrink-0" />
@@ -118,9 +143,13 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
                 <Accordion type="multiple" className="w-full">
                     {Object.entries(groupedByHandle).map(([handle, items]) => {
                          const productTitle = items[0].csvProduct?.name || items[0].shopifyProduct?.name || handle;
-                         const overallStatus = items.some(i => i.status === 'mismatched') ? 'mismatched' 
-                             : items.some(i => i.status === 'missing_in_shopify') ? 'missing_in_shopify'
-                             : items.some(i => i.status === 'not_in_csv') ? 'not_in_csv'
+                         const hasMismatch = items.some(i => i.status === 'mismatched');
+                         const isMissing = items.every(i => i.status === 'missing_in_shopify');
+                         const notInCsv = items.every(i => i.status === 'not_in_csv');
+                         
+                         const overallStatus = hasMismatch ? 'mismatched' 
+                             : isMissing ? 'missing_in_shopify'
+                             : notInCsv ? 'not_in_csv'
                              : 'matched';
                          const config = statusConfig[overallStatus];
 
@@ -147,21 +176,15 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
                                         <TableRow>
                                             <TableHead className="w-[150px]">SKU</TableHead>
                                             <TableHead className="w-[180px]">Status</TableHead>
-                                            <TableHead>CSV Name / Shopify Name</TableHead>
-                                            <TableHead>CSV Price / Shopify Price</TableHead>
+                                            <TableHead>Details</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {items.map(item => {
                                             const itemConfig = statusConfig[item.status];
-                                            const isMismatched = item.status === 'mismatched';
-                                            
-                                            const nameMismatch = isMismatched && item.csvProduct?.name !== item.shopifyProduct?.name;
-                                            const priceMismatch = isMismatched && item.csvProduct?.price !== item.shopifyProduct?.price;
-
                                             return (
                                                 <TableRow key={item.sku} className={
-                                                    isMismatched ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
+                                                    item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
                                                     item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' : ''
                                                 }>
                                                     <TableCell className="font-medium">{item.sku}</TableCell>
@@ -172,32 +195,10 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
                                                     </Badge>
                                                     </TableCell>
                                                      <TableCell>
-                                                        {item.csvProduct && item.shopifyProduct ? (
-                                                            nameMismatch ? (
-                                                                <div>
-                                                                    <p className="text-sm text-muted-foreground">{item.csvProduct.name}</p>
-                                                                    <p className="text-sm text-red-500 line-through">{item.shopifyProduct.name}</p>
-                                                                </div>
-                                                            ) : (
-                                                                <p className="text-sm text-muted-foreground">{item.csvProduct.name}</p>
-                                                            )
-                                                        ) : (
-                                                            <span className="text-sm text-muted-foreground">{item.csvProduct?.name || 'N/A'}</span>
-                                                        )}
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        {item.csvProduct && item.shopifyProduct ? (
-                                                             priceMismatch ? (
-                                                                <div>
-                                                                    <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
-                                                                    <p className="text-sm text-red-500 line-through">${item.shopifyProduct.price.toFixed(2)}</p>
-                                                                </div>
-                                                            ) : (
-                                                                <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
-                                                            )
-                                                        ) : (
-                                                            <span className="text-sm text-muted-foreground">{item.csvProduct ? `$${item.csvProduct.price.toFixed(2)}` : 'N/A'}</span>
-                                                        )}
+                                                       {item.status === 'mismatched' && <MismatchDetails mismatches={item.mismatches} />}
+                                                       {item.status === 'missing_in_shopify' && <p className="text-sm text-muted-foreground">This product is in your CSV but could not be found in Shopify.</p>}
+                                                       {item.status === 'not_in_csv' && <p className="text-sm text-muted-foreground">This product exists in Shopify but not in your CSV file.</p>}
+                                                       {item.status === 'matched' && <p className="text-sm text-muted-foreground">Product data matches between CSV and Shopify.</p>}
                                                     </TableCell>
                                                 </TableRow>
                                             );

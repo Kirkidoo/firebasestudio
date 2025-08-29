@@ -15,11 +15,13 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
           id
           title
           handle
+          bodyHtml
           variants(first: 10) {
             edges {
               node {
                 sku
                 price
+                inventoryQuantity
               }
             }
           }
@@ -39,7 +41,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     const shopify = shopifyApi({
       apiKey: 'dummy',
       apiSecretKey: 'dummy',
-      scopes: ['read_products'],
+      scopes: ['read_products', 'read_inventory'],
       hostName: 'dummy.ngrok.io',
       apiVersion: LATEST_API_VERSION,
       isEmbeddedApp: false,
@@ -105,7 +107,9 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                             handle: productEdge.node.handle,
                             sku: variant.sku,
                             name: productEdge.node.title,
-                            price: parseFloat(variant.price)
+                            price: parseFloat(variant.price),
+                            inventory: variant.inventoryQuantity,
+                            descriptionHtml: productEdge.node.bodyHtml,
                         });
                     }
                 }

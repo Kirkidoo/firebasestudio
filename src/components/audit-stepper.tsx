@@ -7,12 +7,11 @@ import * as z from 'zod';
 import { Frown, Loader2, LogIn, Server, FileText } from 'lucide-react';
 
 import { connectToFtp, listCsvFiles, runAudit } from '@/app/actions';
-import { AuditResult } from '@/lib/types';
+import { AuditResult, DuplicateSku } from '@/lib/types';
 import AuditReport from '@/components/audit-report';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { useToast } from '@/hooks/use-toast';
@@ -39,7 +38,7 @@ export default function AuditStepper() {
   const [progressMessage, setProgressMessage] = useState('');
   const [csvFiles, setCsvFiles] = useState<string[]>([]);
   const [selectedCsv, setSelectedCsv] = useState<string>('');
-  const [auditData, setAuditData] = useState<{ report: AuditResult[], summary: any } | null>(null);
+  const [auditData, setAuditData] = useState<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
@@ -232,7 +231,7 @@ export default function AuditStepper() {
   }
   
   if (step === 'report' && auditData) {
-    return <AuditReport data={auditData.report} summary={auditData.summary} onReset={handleReset} />;
+    return <AuditReport data={auditData.report} summary={auditData.summary} duplicates={auditData.duplicates} onReset={handleReset} />;
   }
 
   if (step === 'error') {
