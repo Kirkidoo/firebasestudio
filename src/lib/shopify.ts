@@ -234,11 +234,15 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 export async function createProduct(product: Product): Promise<{id: string, variantId: string, inventoryItemId: string}> {
     const shopifyClient = getShopifyRestClient();
     
+    const safeDescription = product.descriptionHtml
+        ? product.descriptionHtml.replace(/<h1/gi, '<h2').replace(/<\/h1>/gi, '</h2>')
+        : '';
+        
     const productPayload: any = {
         product: {
             title: product.name,
             handle: product.handle,
-            body_html: product.descriptionHtml,
+            body_html: safeDescription,
             vendor: product.vendor,
             product_type: product.productType,
             status: 'active',

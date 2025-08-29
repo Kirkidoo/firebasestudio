@@ -101,7 +101,7 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
                 price: price,
                 inventory: inventory,
                 descriptionHtml: record['Body (HTML)'] || null,
-                productType: record.Type || null,
+                productType: record.Type || record.Category || null,
                 vendor: record.Vendor || null,
                 compareAtPrice: compareAtPrice,
                 costPerItem: costPerItem,
