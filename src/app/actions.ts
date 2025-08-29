@@ -79,8 +79,9 @@ async function parseCsvFromStream(stream: Readable): Promise<Product[]> {
     for await (const record of parser) {
         // Corrected to use 'SKU', 'Title', and 'Price' from the user's file
         const price = parseFloat(record.Price);
-        if (record.SKU && record.Title && !isNaN(price)) {
+        if (record.Handle && record.SKU && record.Title && !isNaN(price)) {
             records.push({
+                handle: record.Handle,
                 sku: record.SKU,
                 name: record.Title,
                 price: price,
@@ -91,14 +92,16 @@ async function parseCsvFromStream(stream: Readable): Promise<Product[]> {
     return records;
 }
 
-export async function runAudit(csvFileName: string, ftpData: FormData): Promise<{ report: AuditResult[], summary: { matched: number, mismatched: number, not_in_csv: number, missing_in_shopify: number } }> {
+export async function runAudit(csvFileName: string, ftpData: FormData, onProgress: (message: string) => void): Promise<{ report: AuditResult[], summary: { matched: number, mismatched: number, not_in_csv: number, missing_in_shopify: number } }> {
   console.log(`Starting audit for file: ${csvFileName}`);
   
   // 1. Fetch and parse CSV from FTP
+  onProgress('Connecting to FTP server...');
   const client = await getFtpClient(ftpData);
   let csvProducts: Product[] = [];
 
   try {
+    onProgress('Downloading CSV file...');
     console.log('Navigating to FTP directory:', FTP_DIRECTORY);
     await client.cd(FTP_DIRECTORY);
     console.log(`Downloading file: ${csvFileName}`);
@@ -117,6 +120,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
     
     // Once download is complete, create a readable stream from the chunks
     const readable = Readable.from(Buffer.concat(chunks));
+    onProgress('Parsing CSV file...');
     csvProducts = await parseCsvFromStream(readable);
 
   } catch (error) {
@@ -131,7 +135,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   
   if (csvProducts.length === 0) {
     console.log('No products found in the CSV file. Aborting audit.');
-    throw new Error('No products with valid SKU, Title, and Price found in the CSV file.');
+    throw new Error('No products with valid Handle, SKU, Title, and Price found in the CSV file.');
   }
 
   const csvProductMap = new Map(csvProducts.map(p => [p.sku, p]));
@@ -139,6 +143,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
 
   // 2. Fetch products from Shopify using the SKUs from the CSV
   const skusFromCsv = Array.from(csvProductMap.keys());
+  onProgress(`Fetching ${skusFromCsv.length} products from Shopify...`);
   console.log(`Fetching ${skusFromCsv.length} products from Shopify based on CSV SKUs...`);
   const shopifyProducts = await getShopifyProductsBySku(skusFromCsv);
   const shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
@@ -146,6 +151,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
 
 
   // 3. Run audit logic
+  onProgress('Comparing products and generating report...');
   console.log('Running audit comparison logic...');
   const report: AuditResult[] = [];
   const summary = { matched: 0, mismatched: 0, not_in_csv: 0, missing_in_shopify: 0 };
@@ -155,6 +161,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
     const shopifyProduct = shopifyProductMap.get(csvProduct.sku);
 
     if (shopifyProduct) {
+      // Products match if name and price are the same. Handle is already implicitly matched by SKU.
       if (csvProduct.price === shopifyProduct.price && csvProduct.name === shopifyProduct.name) {
         report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct, status: 'matched' });
         summary.matched++;
@@ -176,7 +183,14 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
       summary.not_in_csv++;
   }
   
-  report.sort((a, b) => a.sku.localeCompare(b.sku));
+  report.sort((a, b) => {
+    const handleA = a.csvProduct?.handle || a.shopifyProduct?.handle || '';
+    const handleB = b.csvProduct?.handle || b.shopifyProduct?.handle || '';
+    if (handleA !== handleB) {
+      return handleA.localeCompare(handleB);
+    }
+    return a.sku.localeCompare(b.sku);
+  });
   console.log('Audit comparison complete. Summary:', summary);
 
   return { report, summary };

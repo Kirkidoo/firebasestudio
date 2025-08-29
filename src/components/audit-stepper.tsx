@@ -36,7 +36,7 @@ const defaultFtpCredentials = {
 
 export default function AuditStepper() {
   const [step, setStep] = useState<Step>('connect');
-  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
   const [csvFiles, setCsvFiles] = useState<string[]>([]);
   const [selectedCsv, setSelectedCsv] = useState<string>('');
   const [auditData, setAuditData] = useState<{ report: AuditResult[], summary: any } | null>(null);
@@ -90,21 +90,18 @@ export default function AuditStepper() {
     }
 
     setStep('auditing');
-    setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(prev => (prev < 90 ? prev + Math.random() * 10 : prev));
-    }, 400);
-
+    setProgressMessage('Starting audit...');
+    
     startTransition(async () => {
       try {
         const ftpData = getFtpFormData();
-        const result = await runAudit(selectedCsv, ftpData);
+        const result = await runAudit(selectedCsv, ftpData, (message) => {
+            setProgressMessage(message);
+        });
         setAuditData(result);
-        clearInterval(interval);
-        setProgress(100);
+        setProgressMessage('Report generated!');
         setTimeout(() => setStep('report'), 500);
       } catch (error) {
-        clearInterval(interval);
         const message = error instanceof Error ? error.message : "An unknown error occurred during the audit.";
         setErrorMessage(message);
         setStep('error');
@@ -114,7 +111,7 @@ export default function AuditStepper() {
   
   const handleReset = () => {
     setStep('connect');
-    setProgress(0);
+    setProgressMessage('');
     setCsvFiles([]);
     setSelectedCsv('');
     setAuditData(null);
@@ -230,8 +227,7 @@ export default function AuditStepper() {
             </CardHeader>
             <CardContent className="text-center space-y-4 pt-6">
                 <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-                <Progress value={progress} className="w-full" />
-                <p className="text-sm text-muted-foreground">Connecting to sources and comparing data...</p>
+                <p className="text-sm text-muted-foreground font-medium">{progressMessage}</p>
             </CardContent>
         </Card>
     );

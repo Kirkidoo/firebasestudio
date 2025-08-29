@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, FileQuestion, HelpCircle, XCircle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle } from 'lucide-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
 type FilterType = 'all' | AuditStatus;
 
@@ -18,13 +19,25 @@ const statusConfig: { [key in AuditStatus]: { icon: React.ElementType, text: str
   missing_in_shopify: { icon: XCircle, text: 'Missing in Shopify', badgeClass: 'bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700' },
 };
 
+const getHandle = (item: AuditResult) => item.csvProduct?.handle || item.shopifyProduct?.handle || `no-handle-${item.sku}`;
+
 export default function AuditReport({ data, summary, onReset }: { data: AuditResult[], summary: any, onReset: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
 
   const filteredData = data.filter(item => filter === 'all' || item.status === filter);
 
+  const groupedByHandle = filteredData.reduce((acc, item) => {
+    const handle = getHandle(item);
+    if (!acc[handle]) {
+      acc[handle] = [];
+    }
+    acc[handle].push(item);
+    return acc;
+  }, {} as Record<string, AuditResult[]>);
+
   const handleDownload = () => {
     const csvData = data.map(item => ({
+      Handle: getHandle(item),
       SKU: item.sku,
       Status: statusConfig[item.status].text,
       CSV_Product_Name: item.csvProduct?.name || 'N/A',
@@ -40,35 +53,35 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
       <CardHeader>
         <CardTitle>Audit Report</CardTitle>
         <CardDescription>
-          Comparison of product data between your CSV file (source of truth) and Shopify.
+          Comparison of product data between your CSV file (source of truth) and Shopify. Products are grouped by handle.
         </CardDescription>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <CheckCircle2 className="w-6 h-6 text-green-500 shrink-0" />
                 <div>
                     <div className="text-xl font-bold">{summary.matched}</div>
-                    <div className="text-xs text-muted-foreground">Matched</div>
+                    <div className="text-xs text-muted-foreground">SKUs Matched</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <AlertTriangle className="w-6 h-6 text-yellow-500 shrink-0" />
                 <div>
                     <div className="text-xl font-bold">{summary.mismatched}</div>
-                    <div className="text-xs text-muted-foreground">Mismatched</div>
+                    <div className="text-xs text-muted-foreground">SKUs Mismatched</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <XCircle className="w-6 h-6 text-red-500 shrink-0" />
                 <div>
                     <div className="text-xl font-bold">{summary.missing_in_shopify}</div>
-                    <div className="text-xs text-muted-foreground">Missing in Shopify</div>
+                    <div className="text-xs text-muted-foreground">SKUs Missing in Shopify</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <PlusCircle className="w-6 h-6 text-blue-500 shrink-0" />
                 <div>
                     <div className="text-xl font-bold">{summary.not_in_csv}</div>
-                    <div className="text-xs text-muted-foreground">Not in CSV</div>
+                    <div className="text-xs text-muted-foreground">SKUs Not in CSV</div>
                 </div>
             </div>
         </div>
@@ -88,57 +101,86 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
           </div>
         </div>
         <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[120px]">SKU</TableHead>
-                <TableHead className="w-[180px]">Status</TableHead>
-                <TableHead>CSV Product Details</TableHead>
-                <TableHead>Shopify Product Details</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredData.length > 0 ? filteredData.map(item => {
-                const config = statusConfig[item.status];
-                return (
-                  <TableRow key={item.sku} className={
-                      item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
-                      item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' : ''
-                  }>
-                    <TableCell className="font-medium">{item.sku}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={`whitespace-nowrap ${config.badgeClass}`}>
-                        <config.icon className="mr-1.5 h-3.5 w-3.5" />
-                        {config.text}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {item.csvProduct ? (
-                        <div>
-                          <p>{item.csvProduct.name}</p>
-                          <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
-                        </div>
-                      ) : <span className="text-sm text-muted-foreground">N/A</span>}
-                    </TableCell>
-                    <TableCell>
-                      {item.shopifyProduct ? (
-                        <div>
-                          <p>{item.shopifyProduct.name}</p>
-                          <p className="text-sm text-muted-foreground">${item.shopifyProduct.price.toFixed(2)}</p>
-                        </div>
-                      ) : <span className="text-sm text-muted-foreground">N/A</span>}
-                    </TableCell>
-                  </TableRow>
-                );
-              }) : (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center">
+            {Object.keys(groupedByHandle).length > 0 ? (
+                <Accordion type="multiple" className="w-full">
+                    {Object.entries(groupedByHandle).map(([handle, items]) => {
+                         const productTitle = items[0].csvProduct?.name || items[0].shopifyProduct?.name || handle;
+                         const overallStatus = items.some(i => i.status === 'mismatched') ? 'mismatched' 
+                             : items.some(i => i.status === 'missing_in_shopify') ? 'missing_in_shopify'
+                             : items.some(i => i.status === 'not_in_csv') ? 'not_in_csv'
+                             : 'matched';
+                         const config = statusConfig[overallStatus];
+
+                        return (
+                        <AccordionItem value={handle} key={handle}>
+                            <AccordionTrigger className="px-4 hover:no-underline">
+                                <div className="flex items-center gap-4 w-full">
+                                    <config.icon className={`w-5 h-5 shrink-0 ${
+                                            overallStatus === 'matched' ? 'text-green-500' 
+                                            : overallStatus === 'mismatched' ? 'text-yellow-500' 
+                                            : overallStatus === 'missing_in_shopify' ? 'text-red-500'
+                                            : 'text-blue-500'
+                                    }`} />
+                                    <div className="flex-grow text-left">
+                                        <p className="font-semibold">{productTitle}</p>
+                                        <p className="text-sm text-muted-foreground">{handle}</p>
+                                    </div>
+                                    <Badge variant="outline" className="mr-4">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
+                                </div>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="w-[150px]">SKU</TableHead>
+                                            <TableHead className="w-[180px]">Status</TableHead>
+                                            <TableHead>CSV Details</TableHead>
+                                            <TableHead>Shopify Details</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {items.map(item => {
+                                            const itemConfig = statusConfig[item.status];
+                                            return (
+                                                <TableRow key={item.sku} className={
+                                                    item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
+                                                    item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' : ''
+                                                }>
+                                                    <TableCell className="font-medium">{item.sku}</TableCell>
+                                                    <TableCell>
+                                                    <Badge variant="outline" className={`whitespace-nowrap ${itemConfig.badgeClass}`}>
+                                                        <itemConfig.icon className="mr-1.5 h-3.5 w-3.5" />
+                                                        {itemConfig.text}
+                                                    </Badge>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                    {item.csvProduct ? (
+                                                        <div>
+                                                        <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
+                                                        </div>
+                                                    ) : <span className="text-sm text-muted-foreground">N/A</span>}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                    {item.shopifyProduct ? (
+                                                        <div>
+                                                        <p className="text-sm text-muted-foreground">${item.shopifyProduct.price.toFixed(2)}</p>
+                                                        </div>
+                                                    ) : <span className="text-sm text-muted-foreground">N/A</span>}
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            </AccordionContent>
+                        </AccordionItem>
+                    )})}
+                </Accordion>
+            ) : (
+                <div className="h-24 text-center flex items-center justify-center">
                     No results for this filter.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+                </div>
+            )}
         </div>
       </CardContent>
     </Card>

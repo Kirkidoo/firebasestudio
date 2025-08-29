@@ -1,4 +1,5 @@
 export interface Product {
+  handle: string;
   sku: string;
   name: string;
   price: number;
