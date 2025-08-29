@@ -242,6 +242,8 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 
 export async function createProduct(product: Product): Promise<{id: string, variantId: string, inventoryItemId: string}> {
     const shopifyClient = getShopifyClient();
+    
+    // Correctly structured input for the productCreate mutation
     const input = {
         title: product.name,
         handle: product.handle,
@@ -253,7 +255,7 @@ export async function createProduct(product: Product): Promise<{id: string, vari
         }],
     };
 
-    console.log('Creating product with input:', JSON.stringify({input}, null, 2));
+    console.log('Creating product with variables:', JSON.stringify({input}, null, 2));
 
     const response: any = await shopifyClient.query({
         data: {
