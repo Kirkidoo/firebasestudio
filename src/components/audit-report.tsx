@@ -21,6 +21,19 @@ const statusConfig: { [key in AuditStatus]: { icon: React.ElementType, text: str
 
 const getHandle = (item: AuditResult) => item.csvProduct?.handle || item.shopifyProduct?.handle || `no-handle-${item.sku}`;
 
+const MismatchField = ({ csvValue, shopifyValue }: { csvValue: string | number, shopifyValue: string | number }) => {
+    const isMismatched = csvValue !== shopifyValue;
+    if (!isMismatched) {
+        return <>{shopifyValue}</>;
+    }
+    return (
+        <div className="flex flex-col">
+            <span className="text-red-500 line-through">{shopifyValue}</span>
+            <span className="text-green-500">{csvValue}</span>
+        </div>
+    );
+};
+
 export default function AuditReport({ data, summary, onReset }: { data: AuditResult[], summary: any, onReset: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
 
@@ -134,16 +147,21 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
                                         <TableRow>
                                             <TableHead className="w-[150px]">SKU</TableHead>
                                             <TableHead className="w-[180px]">Status</TableHead>
-                                            <TableHead>CSV Details</TableHead>
-                                            <TableHead>Shopify Details</TableHead>
+                                            <TableHead>CSV Name / Shopify Name</TableHead>
+                                            <TableHead>CSV Price / Shopify Price</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {items.map(item => {
                                             const itemConfig = statusConfig[item.status];
+                                            const isMismatched = item.status === 'mismatched';
+                                            
+                                            const nameMismatch = isMismatched && item.csvProduct?.name !== item.shopifyProduct?.name;
+                                            const priceMismatch = isMismatched && item.csvProduct?.price !== item.shopifyProduct?.price;
+
                                             return (
                                                 <TableRow key={item.sku} className={
-                                                    item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
+                                                    isMismatched ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
                                                     item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' : ''
                                                 }>
                                                     <TableCell className="font-medium">{item.sku}</TableCell>
@@ -153,19 +171,33 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
                                                         {itemConfig.text}
                                                     </Badge>
                                                     </TableCell>
-                                                    <TableCell>
-                                                    {item.csvProduct ? (
-                                                        <div>
-                                                        <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
-                                                        </div>
-                                                    ) : <span className="text-sm text-muted-foreground">N/A</span>}
+                                                     <TableCell>
+                                                        {item.csvProduct && item.shopifyProduct ? (
+                                                            nameMismatch ? (
+                                                                <div>
+                                                                    <p className="text-sm text-muted-foreground">{item.csvProduct.name}</p>
+                                                                    <p className="text-sm text-red-500 line-through">{item.shopifyProduct.name}</p>
+                                                                </div>
+                                                            ) : (
+                                                                <p className="text-sm text-muted-foreground">{item.csvProduct.name}</p>
+                                                            )
+                                                        ) : (
+                                                            <span className="text-sm text-muted-foreground">{item.csvProduct?.name || 'N/A'}</span>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell>
-                                                    {item.shopifyProduct ? (
-                                                        <div>
-                                                        <p className="text-sm text-muted-foreground">${item.shopifyProduct.price.toFixed(2)}</p>
-                                                        </div>
-                                                    ) : <span className="text-sm text-muted-foreground">N/A</span>}
+                                                        {item.csvProduct && item.shopifyProduct ? (
+                                                             priceMismatch ? (
+                                                                <div>
+                                                                    <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
+                                                                    <p className="text-sm text-red-500 line-through">${item.shopifyProduct.price.toFixed(2)}</p>
+                                                                </div>
+                                                            ) : (
+                                                                <p className="text-sm text-muted-foreground">${item.csvProduct.price.toFixed(2)}</p>
+                                                            )
+                                                        ) : (
+                                                            <span className="text-sm text-muted-foreground">{item.csvProduct ? `$${item.csvProduct.price.toFixed(2)}` : 'N/A'}</span>
+                                                        )}
                                                     </TableCell>
                                                 </TableRow>
                                             );
