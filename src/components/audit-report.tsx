@@ -237,6 +237,12 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
     )
   }
 
+  const gToLbs = (grams: number | null | undefined): string => {
+    if (grams === null || grams === undefined) return 'N/A';
+    const lbs = grams * 0.00220462;
+    return `${lbs.toFixed(2)} lbs`;
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -398,7 +404,7 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
                                                                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                                                                     <span className="flex items-center gap-1.5"><DollarSign className="h-3.5 w-3.5" /> Price: <span className="font-medium text-foreground">${item.csvProduct.price.toFixed(2)}</span></span>
                                                                     <span className="flex items-center gap-1.5"><List className="h-3.5 w-3.5" /> Stock: <span className="font-medium text-foreground">{item.csvProduct.inventory ?? 'N/A'}</span></span>
-                                                                    <span className="flex items-center gap-1.5"><Weight className="h-3.5 w-3.5" /> Weight: <span className="font-medium text-foreground">{item.csvProduct.weight ?? 'N/A'}g</span></span>
+                                                                    <span className="flex items-center gap-1.5"><Weight className="h-3.5 w-3.5" /> Weight: <span className="font-medium text-foreground">{gToLbs(item.csvProduct.weight)}</span></span>
                                                                 </div>
                                                             </div>
                                                             <Button size="sm" onClick={() => handleCreate(item)} disabled={isFixing}>
