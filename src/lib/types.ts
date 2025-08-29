@@ -1,4 +1,7 @@
 export interface Product {
+  id: string; // Shopify Product GID
+  variantId: string; // Shopify Variant GID
+  inventoryItemId: string; // Shopify Inventory Item GID
   handle: string;
   sku: string;
   name: string;

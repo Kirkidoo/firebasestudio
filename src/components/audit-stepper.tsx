@@ -231,7 +231,7 @@ export default function AuditStepper() {
   }
   
   if (step === 'report' && auditData) {
-    return <AuditReport data={auditData.report} summary={auditData.summary} duplicates={auditData.duplicates} onReset={handleReset} />;
+    return <AuditReport data={auditData.report} summary={auditData.summary} duplicates={auditData.duplicates} onReset={handleReset} onRefresh={handleRunAudit} />;
   }
 
   if (step === 'error') {

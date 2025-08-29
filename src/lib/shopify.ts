@@ -19,9 +19,13 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
           variants(first: 10) {
             edges {
               node {
+                id
                 sku
                 price
                 inventoryQuantity
+                inventoryItem {
+                    id
+                }
               }
             }
           }
@@ -31,9 +35,51 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
   }
 `;
 
-export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]> {
-    console.log(`Starting to fetch ${skus.length} products from Shopify by SKU.`);
-    if (!process.env.SHOPIFY_SHOP_NAME || !process.env.SHOPIFY_API_ACCESS_TOKEN) {
+const UPDATE_PRODUCT_MUTATION = `
+    mutation productUpdate($input: ProductInput!) {
+        productUpdate(input: $input) {
+            product {
+                id
+            }
+            userErrors {
+                field
+                message
+            }
+        }
+    }
+`;
+
+const UPDATE_PRODUCT_VARIANT_MUTATION = `
+    mutation productVariantUpdate($input: ProductVariantInput!) {
+        productVariantUpdate(input: $input) {
+            productVariant {
+                id
+            }
+            userErrors {
+                field
+                message
+            }
+        }
+    }
+`;
+
+const UPDATE_INVENTORY_LEVEL_MUTATION = `
+    mutation inventorySetOnHandQuantities($input: InventorySetOnHandQuantitiesInput!) {
+        inventorySetOnHandQuantities(input: $input) {
+            inventoryAdjustmentGroup {
+                id
+            }
+            userErrors {
+                field
+                message
+            }
+        }
+    }
+`;
+
+
+function getShopifyClient() {
+     if (!process.env.SHOPIFY_SHOP_NAME || !process.env.SHOPIFY_API_ACCESS_TOKEN) {
         console.error("Shopify environment variables are not set.");
         throw new Error("Shopify environment variables are not set. Please create a .env.local file.");
     }
@@ -41,7 +87,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     const shopify = shopifyApi({
       apiKey: 'dummy',
       apiSecretKey: 'dummy',
-      scopes: ['read_products', 'read_inventory'],
+      scopes: ['read_products', 'write_products', 'read_inventory', 'write_inventory'],
       hostName: 'dummy.ngrok.io',
       apiVersion: LATEST_API_VERSION,
       isEmbeddedApp: false,
@@ -55,7 +101,13 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
       state: 'state',
     });
 
-    const shopifyClient = new shopify.clients.Graphql({ session });
+    return new shopify.clients.Graphql({ session });
+}
+
+
+export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]> {
+    console.log(`Starting to fetch ${skus.length} products from Shopify by SKU.`);
+    const shopifyClient = getShopifyClient();
 
     const products: Product[] = [];
     const skuBatches: string[][] = [];
@@ -104,6 +156,9 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                     const variant = variantEdge.node;
                      if(variant && variant.sku) {
                         products.push({
+                            id: productEdge.node.id,
+                            variantId: variant.id,
+                            inventoryItemId: variant.inventoryItem?.id,
                             handle: productEdge.node.handle,
                             sku: variant.sku,
                             name: productEdge.node.title,
@@ -131,4 +186,85 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     
     console.log(`Finished fetching all Shopify products. Total found: ${products.length}`);
     return products;
+}
+
+export async function updateProduct(id: string, input: { title?: string, bodyHtml?: string }) {
+    const shopifyClient = getShopifyClient();
+    const response: any = await shopifyClient.query({
+        data: {
+            query: UPDATE_PRODUCT_MUTATION,
+            variables: { input: { id, ...input } },
+        },
+    });
+
+    const userErrors = response.body.data?.productUpdate?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+        console.error("Error updating product:", userErrors);
+        throw new Error(`Failed to update product: ${userErrors[0].message}`);
+    }
+    return response.body.data?.productUpdate?.product;
+}
+
+export async function updateProductVariant(id: string, input: { price?: number }) {
+    const shopifyClient = getShopifyClient();
+    const response: any = await shopifyClient.query({
+        data: {
+            query: UPDATE_PRODUCT_VARIANT_MUTATION,
+            variables: { input: { id, ...input } },
+        },
+    });
+
+    const userErrors = response.body.data?.productVariantUpdate?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+        console.error("Error updating variant:", userErrors);
+        throw new Error(`Failed to update variant: ${userErrors[0].message}`);
+    }
+    return response.body.data?.productVariantUpdate?.productVariant;
+}
+
+export async function updateInventoryLevel(inventoryItemId: string, quantity: number) {
+    const shopifyClient = getShopifyClient();
+    // To update inventory, we first need to find the inventory level ID for a specific location.
+    // For this app, we'll assume the first available location.
+    const locationsResponse: any = await shopifyClient.query({
+        data: `{
+            locations(first: 1) {
+                edges {
+                    node {
+                        id
+                    }
+                }
+            }
+        }`
+    });
+    
+    const locationId = locationsResponse.body.data?.locations?.edges[0]?.node?.id;
+    if (!locationId) {
+        throw new Error("Could not find a location to update inventory for.");
+    }
+    
+    const response: any = await shopifyClient.query({
+        data: {
+            query: UPDATE_INVENTORY_LEVEL_MUTATION,
+            variables: {
+                input: {
+                    reason: "correction",
+                    setQuantities: [
+                        {
+                            inventoryItemId: inventoryItemId,
+                            locationId: locationId,
+                            quantity: quantity
+                        }
+                    ]
+                }
+            },
+        },
+    });
+    
+    const userErrors = response.body.data?.inventorySetOnHandQuantities?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+        console.error("Error updating inventory:", userErrors);
+        throw new Error(`Failed to update inventory: ${userErrors[0].message}`);
+    }
+    return response.body.data?.inventorySetOnHandQuantities?.inventoryAdjustmentGroup;
 }

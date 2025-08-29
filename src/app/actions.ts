@@ -4,7 +4,8 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel } from '@/lib/shopify';
+import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
 
@@ -95,6 +96,9 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
                 price: price,
                 inventory: inventory,
                 descriptionHtml: null, // Not present in CSV
+                id: '', // Shopify only
+                variantId: '', // Shopify only
+                inventoryItemId: '', // Shopify only
             });
         }
     }
@@ -222,4 +226,51 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   console.log('Audit comparison complete. Summary:', summary);
 
   return { report, summary, duplicates: duplicateSkus };
+}
+
+
+// --- FIX ACTIONS ---
+
+export async function fixMismatch(
+    fixType: 'name' | 'price' | 'inventory' | 'h1_tag',
+    product: Product
+) {
+    console.log(`Attempting to fix '${fixType}' for SKU: ${product.sku}`);
+
+    try {
+        switch (fixType) {
+            case 'name':
+                if (product.id) {
+                    await updateProduct(product.id, { title: product.name });
+                    console.log(`Successfully updated name for product ID: ${product.id}`);
+                }
+                break;
+            case 'price':
+                 if (product.variantId) {
+                    await updateProductVariant(product.variantId, { price: product.price });
+                    console.log(`Successfully updated price for variant ID: ${product.variantId}`);
+                }
+                break;
+            case 'inventory':
+                 if (product.inventoryItemId && product.inventory !== null) {
+                    await updateInventoryLevel(product.inventoryItemId, product.inventory);
+                    console.log(`Successfully updated inventory for inventory item ID: ${product.inventoryItemId}`);
+                }
+                break;
+            case 'h1_tag':
+                if (product.id && product.descriptionHtml) {
+                    const newDescription = product.descriptionHtml.replace(/<h1/gi, '<h2').replace(/<\/h1>/gi, '</h2>');
+                    await updateProduct(product.id, { bodyHtml: newDescription });
+                    console.log(`Successfully fixed H1 tags for product ID: ${product.id}`);
+                }
+                break;
+        }
+        revalidatePath('/'); // Re-run the audit data fetch on the client
+        return { success: true, message: `Successfully fixed ${fixType} for ${product.sku}` };
+
+    } catch (error) {
+        console.error(`Failed to fix ${fixType} for SKU ${product.sku}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return { success: false, message };
+    }
 }
