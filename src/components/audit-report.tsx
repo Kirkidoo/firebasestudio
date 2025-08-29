@@ -163,6 +163,7 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
     price: <TooltipContent>Price</TooltipContent>,
     inventory: <TooltipContent>Inventory</TooltipContent>,
     h1_tag: <TooltipContent>H1 Tag</TooltipContent>,
+    missing_in_shopify: <TooltipContent>Missing</TooltipContent>,
   };
 
   const MismatchIcon = ({field}: {field: MismatchDetail['field']}) => {
@@ -171,6 +172,7 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
       price: <DollarSign className="h-4 w-4" />,
       inventory: <List className="h-4 w-4" />,
       h1_tag: <span className="text-xs font-bold">H1</span>,
+      missing_in_shopify: <XCircle className="h-4 w-4" />,
     }
     return (
         <TooltipProvider>
@@ -337,7 +339,14 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
                                                     </TableCell>
                                                      <TableCell>
                                                        {item.status === 'mismatched' && <MismatchDetails mismatches={item.mismatches} onFix={(fixType) => handleFix(fixType, item)} disabled={isFixing}/>}
-                                                       {item.status === 'missing_in_shopify' && <p className="text-sm text-muted-foreground">This product is in your CSV but could not be found in Shopify.</p>}
+                                                       {item.status === 'missing_in_shopify' && (
+                                                          <p className="text-sm text-muted-foreground">
+                                                            This SKU is in your CSV but is a{' '}
+                                                            <span className="font-semibold text-foreground">
+                                                              {item.mismatches[0]?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
+                                                            </span>.
+                                                          </p>
+                                                        )}
                                                        {item.status === 'not_in_csv' && <p className="text-sm text-muted-foreground">This product exists in Shopify but not in your CSV file.</p>}
                                                        {item.status === 'matched' && <p className="text-sm text-muted-foreground">Product data matches between CSV and Shopify.</p>}
                                                     </TableCell>

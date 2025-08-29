@@ -13,9 +13,10 @@ export interface Product {
 export type AuditStatus = 'matched' | 'mismatched' | 'not_in_csv' | 'missing_in_shopify';
 
 export interface MismatchDetail {
-  field: 'name' | 'price' | 'inventory' | 'h1_tag';
+  field: 'name' | 'price' | 'inventory' | 'h1_tag' | 'missing_in_shopify';
   csvValue: string | number | null;
   shopifyValue: string | number | null;
+  missingType?: 'product' | 'variant';
 }
 
 export interface AuditResult {

@@ -167,6 +167,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   console.log(`Fetching ${skusFromCsv.length} products from Shopify based on CSV SKUs...`);
   const shopifyProducts = await getShopifyProductsBySku(skusFromCsv);
   const shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
+  const shopifyHandleSet = new Set(shopifyProducts.map(p => p.handle));
   console.log(`Created map with ${shopifyProductMap.size} products from Shopify.`);
 
 
@@ -204,7 +205,19 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
       // Remove from Shopify map to find what's left
       shopifyProductMap.delete(csvProduct.sku); 
     } else {
-      report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct: null, status: 'missing_in_shopify', mismatches: [] });
+      const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
+      report.push({ 
+        sku: csvProduct.sku, 
+        csvProduct, 
+        shopifyProduct: null, 
+        status: 'missing_in_shopify', 
+        mismatches: [{
+          field: 'missing_in_shopify',
+          csvValue: `SKU: ${csvProduct.sku}`,
+          shopifyValue: null,
+          missingType: missingType,
+        }] 
+      });
       summary.missing_in_shopify++;
     }
   }
@@ -232,7 +245,7 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
 // --- FIX ACTIONS ---
 
 export async function fixMismatch(
-    fixType: 'name' | 'price' | 'inventory' | 'h1_tag',
+    fixType: MismatchDetail['field'],
     product: Product
 ) {
     console.log(`Attempting to fix '${fixType}' for SKU: ${product.sku}`);
