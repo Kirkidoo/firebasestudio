@@ -316,14 +316,17 @@ export async function fixMismatch(
 export async function createInShopify(
     product: Product,
     allVariantsForHandle: Product[],
-    missingType: 'product' | 'variant'
+    missingType: 'product' | 'variant',
+    fileName: string
 ) {
     console.log(`Attempting to create '${missingType}' for Handle: ${product.handle}`);
     try {
         let createdProductData;
+        const addClearanceTag = fileName.toLowerCase().includes('clearance');
+        
         if (missingType === 'product') {
             // Pass all variants to the createProduct function
-            createdProductData = await createProduct(allVariantsForHandle);
+            createdProductData = await createProduct(allVariantsForHandle, addClearanceTag);
         } else {
              // For adding a variant, we only need the specific variant's data
              const { id, inventoryItemId } = await addProductVariant(product);

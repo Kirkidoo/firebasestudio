@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useTransition, useEffect } from 'react';
@@ -7,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { fixMismatch, createInShopify } from '@/app/actions';
@@ -55,7 +56,7 @@ const MismatchDetails = ({ mismatches, onFix, disabled }: { mismatches: Mismatch
 };
 
 
-export default function AuditReport({ data, summary, duplicates, onReset, onRefresh }: { data: AuditResult[], summary: Summary, duplicates: DuplicateSku[], onReset: () => void, onRefresh: () => void }) {
+export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: Summary, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
   const [isFixing, startTransition] = useTransition();
   const { toast } = useToast();
@@ -179,7 +180,7 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
     }
 
     startTransition(async () => {
-        const result = await createInShopify(productToCreate, allVariantsForHandle, missingType);
+        const result = await createInShopify(productToCreate, allVariantsForHandle, missingType, fileName);
         if (result.success) {
             toast({ title: 'Success!', description: result.message });
             
@@ -269,8 +270,13 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
           <div>
             <CardTitle>Audit Report</CardTitle>
             <CardDescription>
-              Comparison of product data between your CSV file (source of truth) and Shopify. Products are grouped by handle.
+              Comparison of product data between your CSV file and Shopify. Products are grouped by handle.
             </CardDescription>
+             <div className="flex items-center text-sm text-muted-foreground mt-2">
+                <FileText className="h-4 w-4 mr-2" />
+                <span className="font-medium">Auditing File:</span>
+                <code className="ml-2 text-primary bg-primary/10 px-2 py-1 rounded-md">{fileName}</code>
+            </div>
           </div>
           { isFixing && 
             <div className="flex items-center gap-2 text-sm text-muted-foreground p-2 rounded-md bg-card-foreground/5">

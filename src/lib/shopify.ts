@@ -247,7 +247,7 @@ export async function getShopifyLocations(): Promise<{id: number; name: string}[
 
 // --- Data Mutation Functions ---
 
-export async function createProduct(productVariants: Product[]): Promise<{id: string, variants: {sku: string, inventoryItemId: string}[]}> {
+export async function createProduct(productVariants: Product[], addClearanceTag: boolean): Promise<{id: string, variants: {sku: string, inventoryItemId: string}[]}> {
     const shopifyClient = getShopifyRestClient();
     
     const firstVariant = productVariants[0];
@@ -261,11 +261,11 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
 
     // Prepare options
     const optionNames: string[] = [];
-    if (firstVariant.option1Name && firstVariant.option1Name !== 'Title') optionNames.push(firstVariant.option1Name);
+    if (firstVariant.option1Name && !isSingleDefaultVariant) optionNames.push(firstVariant.option1Name);
     if (firstVariant.option2Name) optionNames.push(firstVariant.option2Name);
     if (firstVariant.option3Name) optionNames.push(firstVariant.option3Name);
     
-    const restOptions = isSingleDefaultVariant ? [] : optionNames.map(name => ({ name }));
+    const restOptions = optionNames.length > 0 ? optionNames.map(name => ({ name })) : [{ name: "Title" }];
     
     const restVariants = productVariants.map(p => {
         const variantPayload: any = {
@@ -276,20 +276,22 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
             inventory_management: 'shopify',
             inventory_policy: 'deny',
             requires_shipping: true,
-            weight: p.weight,
-            weight_unit: 'g', // Send as grams
+            weight: p.weight ? p.weight * 0.00220462 : null, // Convert grams to pounds
+            weight_unit: 'lb',
             cost: p.costPerItem,
         };
         
         // Connect variant to its image by src URL
         if(p.mediaUrl) {
-            variantPayload.image = { src: p.mediaUrl };
+            variantPayload.image_src = p.mediaUrl;
         }
 
-        if (!isSingleDefaultVariant) {
-            variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
-            if (p.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, '-');
-            if (p.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, '-');
+        if (isSingleDefaultVariant) {
+            variantPayload.option1 = 'Default Title';
+        } else {
+            if (firstVariant.option1Name) variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
+            if (firstVariant.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, p.sku);
+            if (firstVariant.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, p.sku);
         }
 
         return variantPayload;
@@ -297,6 +299,8 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
 
     const uniqueImageUrls = [...new Set(productVariants.map(p => p.mediaUrl).filter(Boolean))];
     const restImages = uniqueImageUrls.map(url => ({ src: url }));
+
+    const tags = addClearanceTag ? 'Clearance' : '';
 
     const productPayload: any = {
         product: {
@@ -306,14 +310,12 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
             vendor: firstVariant.vendor,
             product_type: firstVariant.productType,
             status: 'active',
+            tags,
             variants: restVariants,
             images: restImages,
+            options: restOptions,
         }
     };
-    
-    if (restOptions.length > 0) {
-        productPayload.product.options = restOptions;
-    }
 
 
     console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
@@ -371,7 +373,8 @@ export async function addProductVariant(product: Product): Promise<{id: string, 
         compare_at_price: product.compareAtPrice,
         cost: product.costPerItem,
         barcode: product.barcode,
-        grams: product.weight,
+        weight: product.weight ? product.weight * 0.00220462 : null, // Convert grams to pounds
+        weight_unit: 'lb',
         inventory_management: 'shopify',
         inventory_policy: 'deny',
         option1: product.option1Value || product.sku
