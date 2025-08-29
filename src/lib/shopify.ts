@@ -35,6 +35,57 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
   }
 `;
 
+const GET_PRODUCT_ID_BY_HANDLE_QUERY = `
+  query getProductByHandle($handle: String!) {
+    productByHandle(handle: $handle) {
+      id
+    }
+  }
+`;
+
+
+const CREATE_PRODUCT_MUTATION = `
+    mutation productCreate($input: ProductInput!) {
+        productCreate(input: $input) {
+            product {
+                id
+                variants(first: 1) {
+                  edges {
+                    node {
+                      id
+                      inventoryItem {
+                        id
+                      }
+                    }
+                  }
+                }
+            }
+            userErrors {
+                field
+                message
+            }
+        }
+    }
+`;
+
+const ADD_PRODUCT_VARIANT_MUTATION = `
+  mutation productVariantCreate($input: ProductVariantInput!) {
+    productVariantCreate(input: $input) {
+      productVariant {
+        id
+        inventoryItem {
+          id
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+
 const UPDATE_PRODUCT_MUTATION = `
     mutation productUpdate($input: ProductInput!) {
         productUpdate(input: $input) {
@@ -187,6 +238,107 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     console.log(`Finished fetching all Shopify products. Total found: ${products.length}`);
     return products;
 }
+
+export async function createProduct(product: Product): Promise<{id: string, variantId: string, inventoryItemId: string}> {
+    const shopifyClient = getShopifyClient();
+    const input = {
+        title: product.name,
+        handle: product.handle,
+        status: 'ACTIVE',
+        variants: [{
+            price: product.price,
+            sku: product.sku,
+            inventoryQuantities: product.inventory !== null ? {
+                availableQuantity: product.inventory,
+                // Hardcoding first location for now
+            } : undefined,
+            inventoryPolicy: product.inventory === null ? 'CONTINUE' : 'DENY',
+        }],
+    };
+
+    console.log('Creating product with input:', input);
+
+    const response: any = await shopifyClient.query({
+        data: {
+            query: CREATE_PRODUCT_MUTATION,
+            variables: { input },
+        },
+    });
+
+    const userErrors = response.body.data?.productCreate?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+        console.error("Error creating product:", userErrors);
+        throw new Error(`Failed to create product: ${userErrors[0].message}`);
+    }
+    
+    const createdProduct = response.body.data?.productCreate?.product;
+    const variant = createdProduct?.variants.edges[0]?.node;
+
+    if (!createdProduct || !variant) {
+        throw new Error('Product creation did not return the expected product data.');
+    }
+
+    return { 
+        id: createdProduct.id, 
+        variantId: variant.id,
+        inventoryItemId: variant.inventoryItem.id,
+    };
+}
+
+
+export async function addProductVariant(product: Product): Promise<{id: string, inventoryItemId: string}> {
+    const shopifyClient = getShopifyClient();
+
+    // 1. Find the parent product ID using the handle
+    const productResponse: any = await shopifyClient.query({
+        data: {
+            query: GET_PRODUCT_ID_BY_HANDLE_QUERY,
+            variables: { handle: product.handle },
+        },
+    });
+
+    const productId = productResponse.body.data?.productByHandle?.id;
+    if (!productId) {
+        throw new Error(`Could not find product with handle ${product.handle} to add variant to.`);
+    }
+
+    // 2. Create the new variant
+    const input = {
+        productId: productId,
+        price: product.price,
+        sku: product.sku,
+        inventoryQuantities: product.inventory !== null ? {
+                availableQuantity: product.inventory,
+        } : undefined,
+        inventoryPolicy: product.inventory === null ? 'CONTINUE' : 'DENY',
+    };
+    
+    console.log('Adding product variant with input:', input);
+
+    const response: any = await shopifyClient.query({
+        data: {
+            query: ADD_PRODUCT_VARIANT_MUTATION,
+            variables: { input },
+        },
+    });
+
+    const userErrors = response.body.data?.productVariantCreate?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+        console.error("Error adding variant:", userErrors);
+        throw new Error(`Failed to add variant: ${userErrors[0].message}`);
+    }
+
+    const createdVariant = response.body.data?.productVariantCreate?.productVariant;
+    if (!createdVariant) {
+        throw new Error('Variant creation did not return the expected variant data.');
+    }
+
+    return { 
+        id: createdVariant.id, 
+        inventoryItemId: createdVariant.inventoryItem.id 
+    };
+}
+
 
 export async function updateProduct(id: string, input: { title?: string, bodyHtml?: string }) {
     const shopifyClient = getShopifyClient();

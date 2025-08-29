@@ -10,7 +10,7 @@ import { downloadCsv } from '@/lib/utils';
 import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { fixMismatch } from '@/app/actions';
+import { fixMismatch, createInShopify } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -158,6 +158,53 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
       });
   };
 
+  const handleCreate = (item: AuditResult) => {
+    const productToCreate = item.csvProduct;
+    const missingType = item.mismatches[0]?.missingType;
+
+    if (!productToCreate || !missingType) {
+        toast({ title: 'Error', description: 'Cannot create item, missing product data.', variant: 'destructive' });
+        return;
+    }
+
+    startTransition(async () => {
+        const result = await createInShopify(productToCreate, missingType);
+        if (result.success) {
+            toast({ title: 'Success!', description: result.message });
+            
+            // --- Optimistic UI Update ---
+            const newData = [...reportData];
+            const itemIndex = newData.findIndex(d => d.sku === item.sku);
+            if (itemIndex > -1) {
+                const updatedItem = { ...newData[itemIndex] };
+                updatedItem.status = 'matched';
+                updatedItem.mismatches = [];
+                // Create a basic shopifyProduct representation for the UI
+                updatedItem.shopifyProduct = {
+                    ...productToCreate,
+                    id: result.createdProductData?.id || '',
+                    variantId: result.createdProductData?.variantId || '',
+                    inventoryItemId: result.createdProductData?.inventoryItemId || '',
+                    descriptionHtml: '', // Not returned from create
+                };
+
+                newData[itemIndex] = updatedItem;
+                setReportData(newData);
+
+                setReportSummary(prev => ({
+                    ...prev,
+                    missing_in_shopify: prev.missing_in_shopify - 1,
+                    matched: prev.matched + 1,
+                }));
+                setShowRefresh(true);
+            }
+        } else {
+            toast({ title: 'Creation Failed', description: result.message, variant: 'destructive' });
+        }
+    });
+};
+
+
   const mismatchIcons: Record<MismatchDetail['field'], React.ReactElement> = {
     name: <TooltipContent>Name</TooltipContent>,
     price: <TooltipContent>Price</TooltipContent>,
@@ -203,7 +250,7 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
           { isFixing && 
             <div className="flex items-center gap-2 text-sm text-muted-foreground p-2 rounded-md bg-card-foreground/5">
               <Loader2 className="h-4 w-4 animate-spin"/>
-              Applying fix...
+              Applying changes...
             </div>
           }
         </div>
@@ -340,12 +387,18 @@ export default function AuditReport({ data, summary, duplicates, onReset, onRefr
                                                      <TableCell>
                                                        {item.status === 'mismatched' && <MismatchDetails mismatches={item.mismatches} onFix={(fixType) => handleFix(fixType, item)} disabled={isFixing}/>}
                                                        {item.status === 'missing_in_shopify' && (
-                                                          <p className="text-sm text-muted-foreground">
-                                                            This SKU is in your CSV but is a{' '}
-                                                            <span className="font-semibold text-foreground">
-                                                              {item.mismatches[0]?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
-                                                            </span>.
-                                                          </p>
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="text-sm text-muted-foreground">
+                                                              This SKU is in your CSV but is a{' '}
+                                                              <span className="font-semibold text-foreground">
+                                                                {item.mismatches[0]?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
+                                                              </span>.
+                                                            </p>
+                                                            <Button size="sm" onClick={() => handleCreate(item)} disabled={isFixing}>
+                                                                <PlusCircle className="mr-2 h-4 w-4" />
+                                                                Create
+                                                            </Button>
+                                                        </div>
                                                         )}
                                                        {item.status === 'not_in_csv' && <p className="text-sm text-muted-foreground">This product exists in Shopify but not in your CSV file.</p>}
                                                        {item.status === 'matched' && <p className="text-sm text-muted-foreground">Product data matches between CSV and Shopify.</p>}

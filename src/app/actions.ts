@@ -4,7 +4,7 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
@@ -283,6 +283,34 @@ export async function fixMismatch(
 
     } catch (error) {
         console.error(`Failed to fix ${fixType} for SKU ${product.sku}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return { success: false, message };
+    }
+}
+
+export async function createInShopify(
+    product: Product,
+    missingType: 'product' | 'variant'
+) {
+    console.log(`Attempting to create '${missingType}' for SKU: ${product.sku}`);
+    try {
+        let createdProductData;
+        if (missingType === 'product') {
+            createdProductData = await createProduct(product);
+        } else {
+             const { id, inventoryItemId } = await addProductVariant(product);
+             createdProductData = { ...product, variantId: id, inventoryItemId };
+        }
+        
+        // If inventory needs to be set separately
+        if (product.inventory !== null && createdProductData.inventoryItemId) {
+            await updateInventoryLevel(createdProductData.inventoryItemId, product.inventory);
+        }
+
+        revalidatePath('/');
+        return { success: true, message: `Successfully created ${missingType} for ${product.sku}`, createdProductData };
+    } catch (error) {
+        console.error(`Failed to create ${missingType} for SKU ${product.sku}:`, error);
         const message = error instanceof Error ? error.message : 'An unknown error occurred.';
         return { success: false, message };
     }
