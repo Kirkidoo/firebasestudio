@@ -330,10 +330,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
     const uniqueImageUrls = [...new Set(productVariants.map(p => p.mediaUrl).filter(Boolean))];
     const restImages = uniqueImageUrls.map(url => ({ src: url }));
 
-    let tags = firstVariant.tags || '';
-    if (addClearanceTag) {
-        tags = tags ? `Clearance, ${tags}` : 'Clearance';
-    }
+    const tags = addClearanceTag ? 'Clearance' : '';
 
 
     const productPayload: any = {
