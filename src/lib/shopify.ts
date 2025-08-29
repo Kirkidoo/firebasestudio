@@ -292,7 +292,6 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
 
     const getOptionValue = (value: string | null | undefined, fallback: string) => (value?.trim() ? value.trim() : fallback);
 
-    // Prepare options
     const optionNames: string[] = [];
     if (firstVariant.option1Name && !isSingleDefaultVariant) optionNames.push(firstVariant.option1Name);
     if (firstVariant.option2Name) optionNames.push(firstVariant.option2Name);
@@ -313,10 +312,6 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
             weight_unit: 'lb',
             cost: p.costPerItem,
         };
-
-        if (p.mediaUrl) {
-           // This will be handled in phase 2, but we can keep it here for Shopify's reference
-        }
 
         if (!isSingleDefaultVariant) {
             if (p.option1Name) variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
@@ -351,8 +346,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
         productPayload.product.options = restOptions;
     }
 
-
-    console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
+    console.log('Phase 1: Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
 
     try {
         const response: any = await shopifyClient.post({
@@ -367,7 +361,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
             throw new Error('Product creation did not return the expected product data.');
         }
         
-        console.log('Product created successfully in Phase 1.');
+        console.log('Phase 1: Product created successfully.');
         return createdProduct;
 
     } catch(error: any) {
@@ -452,30 +446,30 @@ export async function updateProduct(id: string, input: { title?: string, bodyHtm
     return response.body.data?.productUpdate?.product;
 }
 
-export async function updateProductVariant(id: string, input: { price?: number, imageId?: string }) {
-    const shopifyClient = getShopifyGraphQLClient();
+export async function updateProductVariant(id: string, input: { price?: number, imageId?: number }) {
+    const shopifyClient = getShopifyRestClient();
     
-    const variables: { input: { id: string, price?: number, imageId?: string } } = { input: { id } };
-    if(input.price !== undefined) {
-        variables.input.price = input.price;
-    }
-    if(input.imageId) {
-        variables.input.imageId = input.imageId;
-    }
+    const variantId = id.split('/').pop();
+    const payload = { variant: { id: variantId, ...input }};
+    
+    console.log(`Phase 2: Updating variant with REST payload:`, JSON.stringify(payload, null, 2));
 
-    const response: any = await shopifyClient.query({
-        data: {
-            query: UPDATE_PRODUCT_VARIANT_MUTATION,
-            variables,
-        },
-    });
+    try {
+        const response: any = await shopifyClient.put({
+            path: `variants/${variantId}`,
+            data: payload,
+        });
 
-    const userErrors = response.body.data?.productVariantUpdate?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        console.error("Error updating variant:", userErrors);
-        throw new Error(`Failed to update variant: ${userErrors[0].message}`);
+        if (response.body.errors) {
+            console.error("Error updating variant via REST:", response.body.errors);
+            throw new Error(`Failed to update variant: ${JSON.stringify(response.body.errors)}`);
+        }
+        
+        return response.body.variant;
+    } catch (error: any) {
+        console.error("Error during variant update:", error.response?.body || error);
+        throw new Error(`Failed to update variant. Status: ${error.response?.statusCode} Body: ${JSON.stringify(error.response?.body)}`);
     }
-    return response.body.data?.productVariantUpdate?.productVariant;
 }
 
 // --- Inventory and Collection Functions ---

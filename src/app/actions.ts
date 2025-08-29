@@ -332,22 +332,20 @@ export async function createInShopify(
 
         if (missingType === 'product') {
             // Phase 1: Create Product
+            console.log(`Phase 1: Creating product for handle ${product.handle} with ${allVariantsForHandle.length} variants.`);
             createdProduct = await createProduct(allVariantsForHandle, addClearanceTag);
         } else {
             // For adding a variant, we need the specific variant's data
             const newVariant = await addProductVariant(product);
             // Re-fetch the whole product to ensure we have all variants and images for post-processing
-            const productGid = `gid://shopify/Product/${newVariant.product_id}`;
-            const shopifyProduct = await getShopifyProductsBySku([newVariant.sku]); // This needs to return the full product object
-            createdProduct = shopifyProduct.length > 0 ? shopifyProduct[0] : null; // This is a problem, getShopifyProductsBySku returns a flat list
+            const shopifyProduct = await getShopifyProductsBySku([newVariant.sku]);
+            createdProduct = shopifyProduct.length > 0 ? shopifyProduct[0] : null; 
             
-            // This part is problematic, we need the full product structure back.
-            // Let's simplify and just create a placeholder structure. The key tasks will still run.
-             createdProduct = {
+            createdProduct = {
                 id: newVariant.product_id, // REST ID
                 admin_graphql_api_id: `gid://shopify/Product/${newVariant.product_id}`,
                 variants: [newVariant],
-                images: [], // Images are handled separately when adding a variant
+                images: [], 
              }
         }
         
@@ -358,6 +356,23 @@ export async function createInShopify(
         // --- Post-creation tasks ---
         const productGid = createdProduct.admin_graphql_api_id;
         
+        // --- Phase 2: Link variant to image ---
+        const createdImagesBySrc = new Map(createdProduct.images.map((img: any) => [img.src, img.id]));
+        
+        for (const sourceVariant of allVariantsForHandle) {
+             const createdVariant = createdProduct.variants.find((v: any) => v.sku === sourceVariant.sku);
+             if (!createdVariant || !sourceVariant.mediaUrl) continue;
+
+             const imageId = createdImagesBySrc.get(sourceVariant.mediaUrl);
+             if (imageId) {
+                console.log(`Phase 2: Assigning image ID ${imageId} to variant ID ${createdVariant.id}...`);
+                // Using REST ID for variant update is simpler here if the client supports it
+                await updateProductVariant(createdVariant.id.toString(), { imageId: imageId });
+             } else {
+                console.warn(`Could not find a created image matching source URL: ${sourceVariant.mediaUrl} for SKU: ${sourceVariant.sku}`);
+             }
+        }
+
         // 1. Connect inventory & Set levels for each variant
         const locations = await getShopifyLocations();
         const garageLocation = locations.find(l => l.name === 'Garage Harry Stanley');
@@ -380,21 +395,6 @@ export async function createInShopify(
                     await disconnectInventoryFromLocation(inventoryItemIdGid, garageLocation.id);
                 }
             }
-        }
-
-        // 2. Link variant to image (Phase 2)
-        const createdImagesBySrc = new Map(createdProduct.images.map((img: any) => [img.src, `gid://shopify/ProductImage/${img.id}`]));
-        
-        for (const sourceVariant of allVariantsForHandle) {
-             const createdVariant = createdProduct.variants.find((v: any) => v.sku === sourceVariant.sku);
-             if (!createdVariant || !sourceVariant.mediaUrl) continue;
-
-             const imageIdGid = createdImagesBySrc.get(sourceVariant.mediaUrl);
-             if (imageIdGid) {
-                const variantIdGid = `gid://shopify/ProductVariant/${createdVariant.id}`;
-                console.log(`Assigning image ${imageIdGid} to variant ${variantIdGid}...`);
-                await updateProductVariant(variantIdGid, { imageId: imageIdGid });
-             }
         }
         
         // 3. Link product to collection if category is specified
