@@ -91,7 +91,7 @@ async function parseCsvFromStream(stream: Readable): Promise<Product[]> {
     return records;
 }
 
-export async function runAudit(csvFileName: string, ftpData: FormData): Promise<{ report: AuditResult[], summary: { matched: number, mismatched: number, newInShopify: number, onlyInCsv: number } }> {
+export async function runAudit(csvFileName: string, ftpData: FormData): Promise<{ report: AuditResult[], summary: { matched: number, mismatched: number, not_in_csv: number, missing_in_shopify: number } }> {
   console.log(`Starting audit for file: ${csvFileName}`);
   
   // 1. Fetch and parse CSV from FTP
@@ -147,36 +147,33 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
 
   // 3. Run audit logic
   console.log('Running audit comparison logic...');
-  const allSkusInCsv = new Set(csvProductMap.keys());
-  const allSkusInShopify = new Set(shopifyProductMap.keys());
-
-  // Combine keys to ensure we audit everything found in either source.
-  const allSkus = new Set([...allSkusInCsv, ...allSkusInShopify]);
-  
   const report: AuditResult[] = [];
-  const summary = { matched: 0, mismatched: 0, newInShopify: 0, onlyInCsv: 0 };
+  const summary = { matched: 0, mismatched: 0, not_in_csv: 0, missing_in_shopify: 0 };
 
-  for (const sku of allSkus) {
-    const csvProduct = csvProductMap.get(sku) || null;
-    const shopifyProduct = shopifyProductMap.get(sku) || null;
+  // Iterate over the CSV products (source of truth)
+  for (const csvProduct of csvProducts) {
+    const shopifyProduct = shopifyProductMap.get(csvProduct.sku);
 
-    if (csvProduct && shopifyProduct) {
+    if (shopifyProduct) {
       if (csvProduct.price === shopifyProduct.price && csvProduct.name === shopifyProduct.name) {
-        report.push({ sku, csvProduct, shopifyProduct, status: 'matched' });
+        report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct, status: 'matched' });
         summary.matched++;
       } else {
-        report.push({ sku, csvProduct, shopifyProduct, status: 'mismatched' });
+        report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct, status: 'mismatched' });
         summary.mismatched++;
       }
-    } else if (shopifyProduct) {
-      // This means the product (SKU) exists in Shopify but not in the CSV
-      report.push({ sku, csvProduct: null, shopifyProduct, status: 'new_in_shopify' });
-      summary.newInShopify++;
-    } else if (csvProduct) {
-      // This means the product (SKU) exists in the CSV but not in Shopify
-      report.push({ sku, csvProduct, shopifyProduct: null, status: 'only_in_csv' });
-      summary.onlyInCsv++;
+      // Remove from Shopify map to find what's left
+      shopifyProductMap.delete(csvProduct.sku); 
+    } else {
+      report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct: null, status: 'missing_in_shopify' });
+      summary.missing_in_shopify++;
     }
+  }
+
+  // Any remaining products in the Shopify map were not in the CSV
+  for (const shopifyProduct of shopifyProductMap.values()) {
+      report.push({ sku: shopifyProduct.sku, csvProduct: null, shopifyProduct, status: 'not_in_csv' });
+      summary.not_in_csv++;
   }
   
   report.sort((a, b) => a.sku.localeCompare(b.sku));

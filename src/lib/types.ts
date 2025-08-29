@@ -4,7 +4,7 @@ export interface Product {
   price: number;
 }
 
-export type AuditStatus = 'matched' | 'mismatched' | 'new_in_shopify' | 'only_in_csv';
+export type AuditStatus = 'matched' | 'mismatched' | 'not_in_csv' | 'missing_in_shopify';
 
 export interface AuditResult {
   sku: string;

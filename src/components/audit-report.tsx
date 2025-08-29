@@ -7,15 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, FileQuestion } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, FileQuestion, HelpCircle, XCircle } from 'lucide-react';
 
 type FilterType = 'all' | AuditStatus;
 
 const statusConfig: { [key in AuditStatus]: { icon: React.ElementType, text: string, badgeClass: string } } = {
   matched: { icon: CheckCircle2, text: 'Matched', badgeClass: 'bg-green-100 text-green-800 border-green-200 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700' },
   mismatched: { icon: AlertTriangle, text: 'Mismatched', badgeClass: 'bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-700' },
-  new_in_shopify: { icon: PlusCircle, text: 'New in Shopify', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700' },
-  only_in_csv: { icon: FileQuestion, text: 'Only in CSV', badgeClass: 'bg-gray-100 text-gray-800 border-gray-200 hover:bg-gray-100 dark:bg-gray-700/30 dark:text-gray-300 dark:border-gray-600' },
+  not_in_csv: { icon: PlusCircle, text: 'Not in CSV', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700' },
+  missing_in_shopify: { icon: XCircle, text: 'Missing in Shopify', badgeClass: 'bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700' },
 };
 
 export default function AuditReport({ data, summary, onReset }: { data: AuditResult[], summary: any, onReset: () => void }) {
@@ -40,7 +40,7 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
       <CardHeader>
         <CardTitle>Audit Report</CardTitle>
         <CardDescription>
-          Comparison of product data between your CSV file and Shopify.
+          Comparison of product data between your CSV file (source of truth) and Shopify.
         </CardDescription>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
@@ -58,17 +58,17 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
-                <PlusCircle className="w-6 h-6 text-blue-500 shrink-0" />
+                <XCircle className="w-6 h-6 text-red-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{summary.newInShopify}</div>
-                    <div className="text-xs text-muted-foreground">New in Shopify</div>
+                    <div className="text-xl font-bold">{summary.missing_in_shopify}</div>
+                    <div className="text-xs text-muted-foreground">Missing in Shopify</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
-                <FileQuestion className="w-6 h-6 text-gray-500 shrink-0" />
+                <PlusCircle className="w-6 h-6 text-blue-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{summary.onlyInCsv}</div>
-                    <div className="text-xs text-muted-foreground">Only in CSV</div>
+                    <div className="text-xl font-bold">{summary.not_in_csv}</div>
+                    <div className="text-xs text-muted-foreground">Not in CSV</div>
                 </div>
             </div>
         </div>
@@ -76,9 +76,9 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
       <CardContent>
         <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
           <div className="flex flex-wrap gap-2">
-            {(['all', 'matched', 'mismatched', 'new_in_shopify', 'only_in_csv'] as const).map(f => (
+            {(['all', 'matched', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => (
                 <Button key={f} variant={filter === f ? 'default' : 'outline'} size="sm" onClick={() => setFilter(f)}>
-                    {f === 'all' ? `All (${data.length})` : `${statusConfig[f].text} (${summary[f === 'new_in_shopify' ? 'newInShopify' : f === 'only_in_csv' ? 'onlyInCsv' : f]})`}
+                    {f === 'all' ? `All (${data.length})` : `${statusConfig[f].text} (${summary[f]})`}
                 </Button>
             ))}
           </div>
@@ -101,7 +101,10 @@ export default function AuditReport({ data, summary, onReset }: { data: AuditRes
               {filteredData.length > 0 ? filteredData.map(item => {
                 const config = statusConfig[item.status];
                 return (
-                  <TableRow key={item.sku} className={item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' : ''}>
+                  <TableRow key={item.sku} className={
+                      item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
+                      item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' : ''
+                  }>
                     <TableCell className="font-medium">{item.sku}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={`whitespace-nowrap ${config.badgeClass}`}>
