@@ -4,10 +4,12 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
+const GAMMA_WAREHOUSE_LOCATION_ID = 93998154045;
+
 
 async function getFtpClient(data: FormData) {
   const host = data.get('host') as string;
@@ -276,7 +278,7 @@ export async function fixMismatch(
                 break;
             case 'inventory':
                  if (product.inventoryItemId && product.inventory !== null) {
-                    await updateInventoryLevel(product.inventoryItemId, product.inventory);
+                    await updateInventoryLevel(product.inventoryItemId, product.inventory, GAMMA_WAREHOUSE_LOCATION_ID);
                     console.log(`Successfully updated inventory for inventory item ID: ${product.inventoryItemId}`);
                 }
                 break;
@@ -312,9 +314,13 @@ export async function createInShopify(
              createdProductData = { ...product, variantId: id, inventoryItemId };
         }
         
-        // If inventory needs to be set separately
+        // If inventory needs to be set, we must first connect the item to the location, then set the level.
         if (product.inventory !== null && createdProductData.inventoryItemId) {
-            await updateInventoryLevel(createdProductData.inventoryItemId, product.inventory);
+            console.log(`Connecting inventory item ${createdProductData.inventoryItemId} to location ${GAMMA_WAREHOUSE_LOCATION_ID}...`);
+            await connectInventoryToLocation(createdProductData.inventoryItemId, GAMMA_WAREHOUSE_LOCATION_ID);
+            
+            console.log('Setting inventory level...');
+            await updateInventoryLevel(createdProductData.inventoryItemId, product.inventory, GAMMA_WAREHOUSE_LOCATION_ID);
         }
 
         revalidatePath('/');

@@ -82,6 +82,7 @@ const UPDATE_INVENTORY_LEVEL_MUTATION = `
                 id
             }
             userErrors {
+                code
                 field
                 message
             }
@@ -248,7 +249,7 @@ export async function createProduct(product: Product): Promise<{id: string, vari
                 cost: product.costPerItem,
                 barcode: product.barcode,
                 grams: product.weight,
-                inventory_management: product.inventory === null ? null : 'shopify',
+                inventory_management: 'shopify',
                 inventory_policy: 'deny',
             }],
             images: product.mediaUrl ? [{ src: product.mediaUrl }] : [],
@@ -308,7 +309,7 @@ export async function addProductVariant(product: Product): Promise<{id: string, 
         cost: product.costPerItem,
         barcode: product.barcode,
         grams: product.weight,
-        inventory_management: product.inventory === null ? null : 'shopify',
+        inventory_management: 'shopify',
         inventory_policy: 'deny',
       }
     }
@@ -371,31 +372,48 @@ export async function updateProductVariant(id: string, input: { price?: number }
     return response.body.data?.productVariantUpdate?.productVariant;
 }
 
-export async function updateInventoryLevel(inventoryItemId: string, quantity: number) {
-    const shopifyClient = getShopifyGraphQLClient();
+export async function connectInventoryToLocation(inventoryItemId: string, locationId: number) {
+    const shopifyClient = getShopifyRestClient();
+    const numericInventoryItemId = inventoryItemId.split('/').pop();
     
-    const response: any = await shopifyClient.query({
-        data: {
-            query: UPDATE_INVENTORY_LEVEL_MUTATION,
-            variables: {
-                input: {
-                    reason: "correction",
-                    setQuantities: [
-                        {
-                            inventoryItemId: inventoryItemId,
-                            locationId: GAMMA_WAREHOUSE_LOCATION_GID,
-                            quantity: quantity
-                        }
-                    ]
-                }
+    try {
+        await shopifyClient.post({
+            path: 'inventory_levels/connect',
+            data: {
+                location_id: locationId,
+                inventory_item_id: numericInventoryItemId,
             },
-        },
-    });
-    
-    const userErrors = response.body.data?.inventorySetOnHandQuantities?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        console.error("Error updating inventory:", userErrors);
-        throw new Error(`Failed to update inventory: ${userErrors[0].message}`);
+        });
+        console.log(`Successfully connected inventory item ${inventoryItemId} to location ${locationId}.`);
+    } catch(error: any) {
+        // Shopify might throw an error if the item is already connected, which is fine.
+        const errorBody = error.response?.body;
+        if (errorBody && errorBody.errors && JSON.stringify(errorBody.errors).includes('is already stocked at the location')) {
+             console.log(`Inventory item ${inventoryItemId} was already connected to location ${locationId}.`);
+             return;
+        }
+        console.error(`Error connecting inventory item ${inventoryItemId} to location ${locationId}:`, errorBody || error);
+        throw new Error(`Failed to connect inventory to location: ${JSON.stringify(errorBody?.errors || error.message)}`);
     }
-    return response.body.data?.inventorySetOnHandQuantities?.inventoryAdjustmentGroup;
+}
+
+
+export async function updateInventoryLevel(inventoryItemId: string, quantity: number, locationId: number) {
+    const shopifyClient = getShopifyRestClient();
+    const numericInventoryItemId = inventoryItemId.split('/').pop();
+
+    try {
+        await shopifyClient.post({
+            path: 'inventory_levels/set',
+            data: {
+                inventory_item_id: numericInventoryItemId,
+                location_id: locationId,
+                available: quantity,
+            },
+        });
+        console.log(`Successfully set inventory for item ${inventoryItemId} at location ${locationId} to ${quantity}.`);
+    } catch (error: any) {
+        console.error("Error updating inventory via REST:", error.response?.body || error);
+        throw new Error(`Failed to update inventory: ${JSON.stringify(error.response?.body?.errors || error.message)}`);
+    }
 }
