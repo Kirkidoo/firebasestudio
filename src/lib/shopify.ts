@@ -253,7 +253,7 @@ export async function createProduct(product: Product): Promise<{id: string, vari
         }],
     };
 
-    console.log('Creating product with input:', input);
+    console.log('Creating product with input:', JSON.stringify({input}, null, 2));
 
     const response: any = await shopifyClient.query({
         data: {
@@ -265,13 +265,14 @@ export async function createProduct(product: Product): Promise<{id: string, vari
     const userErrors = response.body.data?.productCreate?.userErrors;
     if (userErrors && userErrors.length > 0) {
         console.error("Error creating product:", userErrors);
-        throw new Error(`Failed to create product: ${userErrors[0].message}`);
+        throw new Error(`Failed to create product: ${userErrors.map((e:any) => e.message).join(', ')}`);
     }
     
     const createdProduct = response.body.data?.productCreate?.product;
     const variant = createdProduct?.variants.edges[0]?.node;
 
     if (!createdProduct || !variant) {
+        console.error("Incomplete creation response:", response.body.data);
         throw new Error('Product creation did not return the expected product data.');
     }
 
@@ -304,7 +305,7 @@ export async function addProductVariant(product: Product): Promise<{id: string, 
         productId: productId,
         price: product.price,
         sku: product.sku,
-        inventoryPolicy: product.inventory === null ? 'CONTINUE' : 'DENY',
+        inventoryPolicy: 'DENY',
     };
     
     console.log('Adding product variant with input:', input);
