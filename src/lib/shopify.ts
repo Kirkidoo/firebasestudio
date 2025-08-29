@@ -1,4 +1,5 @@
 
+
 'use server';
 
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
@@ -264,7 +265,7 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
     if (firstVariant.option2Name) optionNames.push(firstVariant.option2Name);
     if (firstVariant.option3Name) optionNames.push(firstVariant.option3Name);
     
-    const restOptions = optionNames.length > 0 ? optionNames.map(name => ({ name })) : [{ name: "Title" }];
+    const restOptions = isSingleDefaultVariant ? [] : optionNames.map(name => ({ name }));
     
     const restVariants = productVariants.map(p => {
         const variantPayload: any = {
@@ -279,20 +280,18 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
             weight_unit: 'g', // Send as grams
             cost: p.costPerItem,
         };
-
-        if (optionNames.length > 0) {
-            if (firstVariant.option1Name && firstVariant.option1Name !== 'Title') {
-                variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
-            }
-            if (firstVariant.option2Name) {
-                variantPayload.option2 = getOptionValue(p.option2Value, '-');
-            }
-            if (firstVariant.option3Name) {
-                variantPayload.option3 = getOptionValue(p.option3Value, '-');
-            }
-        } else {
-             variantPayload.option1 = 'Default Title';
+        
+        // Connect variant to its image by src URL
+        if(p.mediaUrl) {
+            variantPayload.image = { src: p.mediaUrl };
         }
+
+        if (!isSingleDefaultVariant) {
+            variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
+            if (p.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, '-');
+            if (p.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, '-');
+        }
+
         return variantPayload;
     });
 
@@ -309,9 +308,13 @@ export async function createProduct(productVariants: Product[]): Promise<{id: st
             status: 'active',
             variants: restVariants,
             images: restImages,
-            options: restOptions,
         }
     };
+    
+    if (restOptions.length > 0) {
+        productPayload.product.options = restOptions;
+    }
+
 
     console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
 
