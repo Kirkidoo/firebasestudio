@@ -44,49 +44,6 @@ const GET_PRODUCT_ID_BY_HANDLE_QUERY = `
   }
 `;
 
-
-const CREATE_PRODUCT_MUTATION = `
-    mutation productCreate($input: ProductInput!) {
-        productCreate(input: $input) {
-            product {
-                id
-                variants(first: 1) {
-                  edges {
-                    node {
-                      id
-                      inventoryItem {
-                        id
-                      }
-                    }
-                  }
-                }
-            }
-            userErrors {
-                field
-                message
-            }
-        }
-    }
-`;
-
-const ADD_PRODUCT_VARIANT_MUTATION = `
-  mutation productVariantCreate($input: ProductVariantInput!) {
-    productVariantCreate(input: $input) {
-      productVariant {
-        id
-        inventoryItem {
-          id
-        }
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
-
-
 const UPDATE_PRODUCT_MUTATION = `
     mutation productUpdate($input: ProductInput!) {
         productUpdate(input: $input) {
@@ -130,7 +87,7 @@ const UPDATE_INVENTORY_LEVEL_MUTATION = `
 `;
 
 
-function getShopifyClient() {
+function getShopifyGraphQLClient() {
      if (!process.env.SHOPIFY_SHOP_NAME || !process.env.SHOPIFY_API_ACCESS_TOKEN) {
         console.error("Shopify environment variables are not set.");
         throw new Error("Shopify environment variables are not set. Please create a .env.local file.");
@@ -156,10 +113,36 @@ function getShopifyClient() {
     return new shopify.clients.Graphql({ session });
 }
 
+function getShopifyRestClient() {
+     if (!process.env.SHOPIFY_SHOP_NAME || !process.env.SHOPIFY_API_ACCESS_TOKEN) {
+        console.error("Shopify environment variables are not set.");
+        throw new Error("Shopify environment variables are not set. Please create a .env.local file.");
+    }
+    
+    const shopify = shopifyApi({
+      apiKey: 'dummy',
+      apiSecretKey: 'dummy',
+      scopes: ['read_products', 'write_products', 'read_inventory', 'write_inventory'],
+      hostName: 'dummy.ngrok.io',
+      apiVersion: LATEST_API_VERSION,
+      isEmbeddedApp: false,
+      maxRetries: 3,
+    });
+
+    const session = new Session({
+      shop: process.env.SHOPIFY_SHOP_NAME!,
+      accessToken: process.env.SHOPIFY_API_ACCESS_TOKEN!,
+      isOnline: false,
+      state: 'state',
+    });
+
+    return new shopify.clients.Rest({ session, apiVersion: LATEST_API_VERSION });
+}
+
 
 export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]> {
     console.log(`Starting to fetch ${skus.length} products from Shopify by SKU.`);
-    const shopifyClient = getShopifyClient();
+    const shopifyClient = getShopifyGraphQLClient();
 
     const products: Product[] = [];
     const skuBatches: string[][] = [];
@@ -196,8 +179,6 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                  await sleep(5000);
                  // We should ideally retry the same batch, but for simplicity we'll continue
               }
-              // Don't throw, just log the error and continue with what we have
-              // throw new Error(`GraphQL Error: ${JSON.stringify(response.body.errors)}`);
             }
 
             const productEdges = response.body.data?.products?.edges || [];
@@ -230,7 +211,6 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                 console.log("Caught throttled error, waiting 5 seconds before retrying...");
                 await sleep(5000);
             } else {
-               // Don't rethrow, just log and continue with the next batch.
                console.error("An unexpected error occurred while fetching a batch. Skipping to next.", error);
             }
         }
@@ -241,104 +221,105 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 }
 
 export async function createProduct(product: Product): Promise<{id: string, variantId: string, inventoryItemId: string}> {
-    const shopifyClient = getShopifyClient();
+    const shopifyClient = getShopifyRestClient();
     
-    // Correctly structured input for the productCreate mutation
-    const input = {
-        title: product.name,
-        handle: product.handle,
-        status: 'ACTIVE',
-        variants: [{
-            price: product.price,
-            sku: product.sku,
-            inventoryPolicy: product.inventory === null ? 'CONTINUE' : 'DENY',
-        }],
+    const productPayload = {
+        product: {
+            title: product.name,
+            handle: product.handle,
+            status: 'active',
+            variants: [{
+                price: product.price,
+                sku: product.sku,
+                inventory_policy: product.inventory === null ? 'continue' : 'deny',
+            }],
+        }
     };
 
-    console.log('Creating product with variables:', JSON.stringify({input}, null, 2));
+    console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
 
-    const response: any = await shopifyClient.query({
-        data: {
-            query: CREATE_PRODUCT_MUTATION,
-            variables: { input },
-        },
+    const response: any = await shopifyClient.post({
+        path: 'products',
+        data: productPayload,
     });
 
-    const userErrors = response.body.data?.productCreate?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        console.error("Error creating product:", userErrors);
-        throw new Error(`Failed to create product: ${userErrors.map((e:any) => e.message).join(', ')}`);
+    if (!response.ok) {
+        console.error("Error creating product via REST:", response.body);
+        throw new Error(`Failed to create product. Status: ${response.status} Body: ${JSON.stringify(response.body)}`);
     }
     
-    const createdProduct = response.body.data?.productCreate?.product;
-    const variant = createdProduct?.variants.edges[0]?.node;
+    const createdProduct = response.body.product;
+    const variant = createdProduct?.variants[0];
 
     if (!createdProduct || !variant) {
-        console.error("Incomplete creation response:", response.body.data);
+        console.error("Incomplete REST creation response:", response.body);
         throw new Error('Product creation did not return the expected product data.');
     }
-
+    
+    // The REST API returns numeric IDs, but the rest of the app uses GraphQL GIDs.
+    // For the optimistic UI update to work, we need to return something. We will return the GIDs.
     return { 
-        id: createdProduct.id, 
-        variantId: variant.id,
-        inventoryItemId: variant.inventoryItem.id,
+        id: `gid://shopify/Product/${createdProduct.id}`, 
+        variantId: `gid://shopify/ProductVariant/${variant.id}`,
+        inventoryItemId: `gid://shopify/InventoryItem/${variant.inventory_item_id}`,
     };
 }
 
 
 export async function addProductVariant(product: Product): Promise<{id: string, inventoryItemId: string}> {
-    const shopifyClient = getShopifyClient();
+    const shopifyClient = getShopifyRestClient();
+    const graphQLClient = getShopifyGraphQLClient();
 
-    // 1. Find the parent product ID using the handle
-    const productResponse: any = await shopifyClient.query({
+    // 1. Find the parent product GID using the handle with GraphQL
+    const productResponse: any = await graphQLClient.query({
         data: {
             query: GET_PRODUCT_ID_BY_HANDLE_QUERY,
             variables: { handle: product.handle },
         },
     });
 
-    const productId = productResponse.body.data?.productByHandle?.id;
-    if (!productId) {
+    const productGid = productResponse.body.data?.productByHandle?.id;
+    if (!productGid) {
         throw new Error(`Could not find product with handle ${product.handle} to add variant to.`);
     }
+    // Extract numeric ID from GID for REST API
+    const productId = productGid.split('/').pop();
 
-    // 2. Create the new variant
-    const input = {
-        productId: productId,
+    // 2. Create the new variant using REST API
+    const variantPayload = {
+      variant: {
         price: product.price,
         sku: product.sku,
-        inventoryPolicy: 'DENY',
-    };
+        inventory_policy: 'deny',
+      }
+    }
     
-    console.log('Adding product variant with input:', input);
+    console.log(`Adding product variant to product ID ${productId} with REST payload:`, variantPayload);
 
-    const response: any = await shopifyClient.query({
-        data: {
-            query: ADD_PRODUCT_VARIANT_MUTATION,
-            variables: { input },
-        },
+    const response: any = await shopifyClient.post({
+        path: `products/${productId}/variants`,
+        data: variantPayload,
     });
 
-    const userErrors = response.body.data?.productVariantCreate?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        console.error("Error adding variant:", userErrors);
-        throw new Error(`Failed to add variant: ${userErrors[0].message}`);
+    if (!response.ok) {
+        console.error("Error adding variant via REST:", response.body);
+        throw new Error(`Failed to add variant. Status: ${response.status} Body: ${JSON.stringify(response.body)}`);
     }
 
-    const createdVariant = response.body.data?.productVariantCreate?.productVariant;
+    const createdVariant = response.body.variant;
     if (!createdVariant) {
         throw new Error('Variant creation did not return the expected variant data.');
     }
 
     return { 
-        id: createdVariant.id, 
-        inventoryItemId: createdVariant.inventoryItem.id 
+        id: `gid://shopify/ProductVariant/${createdVariant.id}`, 
+        inventoryItemId: `gid://shopify/InventoryItem/${createdVariant.inventory_item_id}`,
     };
 }
 
 
 export async function updateProduct(id: string, input: { title?: string, bodyHtml?: string }) {
-    const shopifyClient = getShopifyClient();
+    const shopifyClient = getShopifyGraphQLClient();
     const response: any = await shopifyClient.query({
         data: {
             query: UPDATE_PRODUCT_MUTATION,
@@ -355,7 +336,7 @@ export async function updateProduct(id: string, input: { title?: string, bodyHtm
 }
 
 export async function updateProductVariant(id: string, input: { price?: number }) {
-    const shopifyClient = getShopifyClient();
+    const shopifyClient = getShopifyGraphQLClient();
     const response: any = await shopifyClient.query({
         data: {
             query: UPDATE_PRODUCT_VARIANT_MUTATION,
@@ -372,7 +353,7 @@ export async function updateProductVariant(id: string, input: { price?: number }
 }
 
 export async function updateInventoryLevel(inventoryItemId: string, quantity: number) {
-    const shopifyClient = getShopifyClient();
+    const shopifyClient = getShopifyGraphQLClient();
     // To update inventory, we first need to find the inventory level ID for a specific location.
     // For this app, we'll assume the first available location.
     const locationsResponse: any = await shopifyClient.query({
