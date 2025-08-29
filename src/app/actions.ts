@@ -5,7 +5,7 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
@@ -331,7 +331,9 @@ export async function createInShopify(
             const newVariant = await addProductVariant(product);
              createdProduct = {
                 id: `gid://shopify/Product/${newVariant.product_id}`,
-                variants: [newVariant]
+                admin_graphql_api_id: `gid://shopify/Product/${newVariant.product_id}`,
+                variants: [newVariant],
+                images: [], // Images are handled separately when adding a variant
              }
         }
         
@@ -392,6 +394,14 @@ export async function createInShopify(
             }
         }
 
+        // 5. Publish to all sales channels
+        if (productGid) {
+            console.log(`Publishing product ${productGid} to all sales channels...`);
+            await publishProductToSalesChannels(productGid);
+        } else {
+            console.warn(`Could not publish product with handle ${product.handle} because its GID was not found.`);
+        }
+
 
         revalidatePath('/');
         return { success: true, message: `Successfully created ${missingType} for ${product.sku}`, createdProductData: createdProduct };
@@ -401,6 +411,4 @@ export async function createInShopify(
         return { success: false, message };
     }
 }
-    
-
     

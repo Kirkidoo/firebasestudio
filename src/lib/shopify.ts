@@ -1,5 +1,4 @@
 
-
 'use server';
 
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
@@ -60,6 +59,38 @@ const GET_COLLECTION_BY_TITLE_QUERY = `
     }
   }
 `;
+
+const GET_ALL_PUBLICATIONS_QUERY = `
+  query getPublications {
+    publications(first: 50) {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+const PUBLISHABLE_PUBLISH_MUTATION = `
+  mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
+    publishablePublish(id: $id, input: $input) {
+      publishable {
+        ... on Product {
+          availablePublicationsCount {
+            count
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 
 const UPDATE_PRODUCT_MUTATION = `
     mutation productUpdate($input: ProductInput!) {
@@ -265,7 +296,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
     if (firstVariant.option2Name) optionNames.push(firstVariant.option2Name);
     if (firstVariant.option3Name) optionNames.push(firstVariant.option3Name);
     
-    const restOptions = optionNames.length > 0 ? optionNames.map(name => ({ name })) : [{ name: "Title" }];
+    const restOptions = optionNames.length > 0 ? optionNames.map(name => ({ name })) : [];
     
     const restVariants = productVariants.map(p => {
         const variantPayload: any = {
@@ -276,13 +307,13 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
             inventory_management: 'shopify',
             inventory_policy: 'deny',
             requires_shipping: true,
-            weight: p.weight, // Grams are sent directly, Shopify converts
-            weight_unit: 'g',
+            weight: p.weight ? p.weight / 453.592 : 0, // Convert grams to lbs
+            weight_unit: 'lb',
             cost: p.costPerItem,
         };
 
         if (isSingleDefaultVariant) {
-            variantPayload.option1 = 'Default Title';
+            // No options needed for single default variant
         } else {
             if (firstVariant.option1Name) variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
             if (firstVariant.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, p.sku);
@@ -308,9 +339,12 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
             tags,
             variants: restVariants,
             images: restImages,
-            options: restOptions,
         }
     };
+    
+    if(restOptions.length > 0) {
+        productPayload.product.options = restOptions;
+    }
 
 
     console.log('Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
@@ -361,8 +395,8 @@ export async function addProductVariant(product: Product): Promise<any> {
         compare_at_price: product.compareAtPrice,
         cost: product.costPerItem,
         barcode: product.barcode,
-        weight: product.weight, // Grams are sent directly
-        weight_unit: 'g',
+        weight: product.weight ? product.weight / 453.592 : 0, // Convert grams to lbs
+        weight_unit: 'lb',
         inventory_management: 'shopify',
         inventory_policy: 'deny',
         option1: product.option1Value || product.sku,
@@ -545,6 +579,38 @@ export async function linkProductToCollection(productGid: string, collectionGid:
         // Don't throw, just warn, as this is a post-creation task.
     }
 }
-    
 
+export async function publishProductToSalesChannels(productGid: string): Promise<void> {
+    const shopifyClient = getShopifyGraphQLClient();
+    
+    // 1. Fetch all available publications
+    const publicationsResponse: any = await shopifyClient.query({ data: { query: GET_ALL_PUBLICATIONS_QUERY } });
+    const publications = publicationsResponse.body.data?.publications?.edges.map((edge: any) => edge.node) || [];
+    
+    if (publications.length === 0) {
+        console.warn(`No sales channel publications found to publish product ${productGid} to.`);
+        return;
+    }
+
+    const publicationInputs = publications.map((pub: { id: string }) => ({ publicationId: pub.id }));
+
+    // 2. Publish the product to all publications
+    const result: any = await shopifyClient.query({
+        data: {
+            query: PUBLISHABLE_PUBLISH_MUTATION,
+            variables: {
+                id: productGid,
+                input: publicationInputs
+            }
+        }
+    });
+
+    const userErrors = result.body.data?.publishablePublish?.userErrors;
+    if (userErrors && userErrors.length > 0) {
+        const errorMessages = userErrors.map((e: any) => e.message).join('; ');
+        console.warn(`Could not publish product ${productGid} to all sales channels: ${errorMessages}`);
+    } else {
+        console.log(`Successfully requested to publish product ${productGid} to ${publications.length} sales channels.`);
+    }
+}
     
