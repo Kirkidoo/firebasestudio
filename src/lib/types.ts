@@ -15,6 +15,7 @@ export interface Product {
   barcode: string | null;
   weight: number | null;
   mediaUrl: string | null;
+  category: string | null; // For mapping to Shopify Collections
 }
 
 export type AuditStatus = 'matched' | 'mismatched' | 'not_in_csv' | 'missing_in_shopify';

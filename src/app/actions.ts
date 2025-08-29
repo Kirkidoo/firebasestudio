@@ -4,7 +4,7 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
@@ -101,13 +101,14 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
                 price: price,
                 inventory: inventory,
                 descriptionHtml: record['Body (HTML)'] || null,
-                productType: record.Type || record.Category || null,
+                productType: record.Type || null,
                 vendor: record.Vendor || null,
                 compareAtPrice: compareAtPrice,
                 costPerItem: costPerItem,
                 barcode: record['Variant Barcode'] || null,
                 weight: weight,
                 mediaUrl: record['Image Src'] || null,
+                category: record.Category || null,
                 id: '', // Shopify only
                 variantId: '', // Shopify only
                 inventoryItemId: '', // Shopify only
@@ -314,13 +315,34 @@ export async function createInShopify(
              createdProductData = { ...product, variantId: id, inventoryItemId };
         }
         
-        // If inventory needs to be set, we must first connect the item to the location, then set the level.
+        // --- Post-creation tasks ---
+
+        // 1. Connect to Gamma Warehouse and set inventory
         if (product.inventory !== null && createdProductData.inventoryItemId) {
             console.log(`Connecting inventory item ${createdProductData.inventoryItemId} to location ${GAMMA_WAREHOUSE_LOCATION_ID}...`);
             await connectInventoryToLocation(createdProductData.inventoryItemId, GAMMA_WAREHOUSE_LOCATION_ID);
             
             console.log('Setting inventory level...');
             await updateInventoryLevel(createdProductData.inventoryItemId, product.inventory, GAMMA_WAREHOUSE_LOCATION_ID);
+
+             // 2. Disconnect from 'Garage Harry Stanley' location if it exists
+            const locations = await getShopifyLocations();
+            const garageLocation = locations.find(l => l.name === 'Garage Harry Stanley');
+            if (garageLocation) {
+                console.log(`Found 'Garage Harry Stanley' (ID: ${garageLocation.id}). Disconnecting inventory...`);
+                await disconnectInventoryFromLocation(createdProductData.inventoryItemId, garageLocation.id);
+            }
+        }
+        
+        // 3. Link to collection if category is specified
+        if (product.category && createdProductData.id) {
+            console.log(`Linking product to collection: '${product.category}'...`);
+            const collectionId = await getCollectionIdByTitle(product.category);
+            if (collectionId) {
+                await linkProductToCollection(createdProductData.id, collectionId);
+            } else {
+                console.warn(`Could not find collection with title '${product.category}'. Skipping linking.`);
+            }
         }
 
         revalidatePath('/');
@@ -331,5 +353,3 @@ export async function createInShopify(
         return { success: false, message };
     }
 }
-
-    
