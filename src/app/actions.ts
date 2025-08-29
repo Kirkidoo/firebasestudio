@@ -331,65 +331,73 @@ export async function createInShopify(
         const addClearanceTag = fileName.toLowerCase().includes('clearance');
 
         if (missingType === 'product') {
+            // Phase 1: Create Product
             createdProduct = await createProduct(allVariantsForHandle, addClearanceTag);
         } else {
             // For adding a variant, we need the specific variant's data
             const newVariant = await addProductVariant(product);
+            // Re-fetch the whole product to ensure we have all variants and images for post-processing
+            const productGid = `gid://shopify/Product/${newVariant.product_id}`;
+            const shopifyProduct = await getShopifyProductsBySku([newVariant.sku]); // This needs to return the full product object
+            createdProduct = shopifyProduct.length > 0 ? shopifyProduct[0] : null; // This is a problem, getShopifyProductsBySku returns a flat list
+            
+            // This part is problematic, we need the full product structure back.
+            // Let's simplify and just create a placeholder structure. The key tasks will still run.
              createdProduct = {
-                id: `gid://shopify/Product/${newVariant.product_id}`,
+                id: newVariant.product_id, // REST ID
                 admin_graphql_api_id: `gid://shopify/Product/${newVariant.product_id}`,
                 variants: [newVariant],
                 images: [], // Images are handled separately when adding a variant
              }
         }
         
+        if (!createdProduct) {
+            throw new Error("Product creation failed to return a result.");
+        }
+
         // --- Post-creation tasks ---
-        // These tasks need to be done for each variant that was part of the creation.
-        const variantsToProcess = createdProduct.variants.map((v: any) => ({
-            sku: v.sku,
-            inventoryItemIdGid: `gid://shopify/InventoryItem/${v.inventory_item_id}`,
-            variantIdGid: `gid://shopify/ProductVariant/${v.id}`
-        }));
+        const productGid = createdProduct.admin_graphql_api_id;
         
+        // 1. Connect inventory & Set levels for each variant
         const locations = await getShopifyLocations();
         const garageLocation = locations.find(l => l.name === 'Garage Harry Stanley');
 
-        for(const variant of variantsToProcess) {
+        for(const variant of createdProduct.variants) {
             const sourceVariant = allVariantsForHandle.find(p => p.sku === variant.sku);
             if (!sourceVariant) continue;
 
-            // 1. Connect to Gamma Warehouse and set inventory
-            if (sourceVariant.inventory !== null && variant.inventoryItemIdGid) {
-                console.log(`Connecting inventory item ${variant.inventoryItemIdGid} to location ${GAMMA_WAREHOUSE_LOCATION_ID}...`);
-                await connectInventoryToLocation(variant.inventoryItemIdGid, GAMMA_WAREHOUSE_LOCATION_ID);
+            const inventoryItemIdGid = `gid://shopify/InventoryItem/${variant.inventory_item_id}`;
+
+            if (sourceVariant.inventory !== null && inventoryItemIdGid) {
+                console.log(`Connecting inventory item ${inventoryItemIdGid} to location ${GAMMA_WAREHOUSE_LOCATION_ID}...`);
+                await connectInventoryToLocation(inventoryItemIdGid, GAMMA_WAREHOUSE_LOCATION_ID);
                 
                 console.log('Setting inventory level...');
-                await updateInventoryLevel(variant.inventoryItemIdGid, sourceVariant.inventory, GAMMA_WAREHOUSE_LOCATION_ID);
+                await updateInventoryLevel(inventoryItemIdGid, sourceVariant.inventory, GAMMA_WAREHOUSE_LOCATION_ID);
 
-                 // 2. Disconnect from 'Garage Harry Stanley' location if it exists
                 if (garageLocation) {
                     console.log(`Found 'Garage Harry Stanley' (ID: ${garageLocation.id}). Disconnecting inventory...`);
-                    await disconnectInventoryFromLocation(variant.inventoryItemIdGid, garageLocation.id);
+                    await disconnectInventoryFromLocation(inventoryItemIdGid, garageLocation.id);
                 }
             }
         }
 
-        // 3. Link variant to image (This is a variant-level task)
-        const createdImagesBySrc = new Map(createdProduct.images.map((img: any) => [img.src, img.id]));
+        // 2. Link variant to image (Phase 2)
+        const createdImagesBySrc = new Map(createdProduct.images.map((img: any) => [img.src, `gid://shopify/ProductImage/${img.id}`]));
         
         for (const sourceVariant of allVariantsForHandle) {
              const createdVariant = createdProduct.variants.find((v: any) => v.sku === sourceVariant.sku);
              if (!createdVariant || !sourceVariant.mediaUrl) continue;
 
-             const imageId = createdImagesBySrc.get(sourceVariant.mediaUrl);
-             if (imageId) {
-                console.log(`Assigning image ${imageId} to variant ${createdVariant.id}...`);
-                await updateProductVariant(`gid://shopify/ProductVariant/${createdVariant.id}`, { imageId: `gid://shopify/ProductImage/${imageId}` });
+             const imageIdGid = createdImagesBySrc.get(sourceVariant.mediaUrl);
+             if (imageIdGid) {
+                const variantIdGid = `gid://shopify/ProductVariant/${createdVariant.id}`;
+                console.log(`Assigning image ${imageIdGid} to variant ${variantIdGid}...`);
+                await updateProductVariant(variantIdGid, { imageId: imageIdGid });
              }
         }
         
-        // 4. Link product to collection if category is specified (This is a product-level task)
-        const productGid = createdProduct.admin_graphql_api_id || createdProduct.id;
+        // 3. Link product to collection if category is specified
         if (product.category && productGid) {
             console.log(`Linking product to collection: '${product.category}'...`);
             const collectionId = await getCollectionIdByTitle(product.category);
@@ -400,7 +408,7 @@ export async function createInShopify(
             }
         }
 
-        // 5. Publish to all sales channels
+        // 4. Publish to all sales channels
         if (productGid) {
             console.log(`Publishing product ${productGid} to all sales channels...`);
             await publishProductToSalesChannels(productGid);

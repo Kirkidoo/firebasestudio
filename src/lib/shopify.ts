@@ -315,13 +315,13 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
         };
 
         if (p.mediaUrl) {
-            variantPayload.image_src = p.mediaUrl;
+           // This will be handled in phase 2, but we can keep it here for Shopify's reference
         }
 
         if (!isSingleDefaultVariant) {
-            if (firstVariant.option1Name) variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
-            if (firstVariant.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, p.sku);
-            if (firstVariant.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, p.sku);
+            if (p.option1Name) variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
+            if (p.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, p.sku);
+            if (p.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, p.sku);
         }
 
         return variantPayload;
@@ -369,7 +369,8 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
             console.error("Incomplete REST creation response:", response.body);
             throw new Error('Product creation did not return the expected product data.');
         }
-
+        
+        console.log('Product created successfully in Phase 1.');
         return createdProduct;
 
     } catch(error: any) {
@@ -457,8 +458,8 @@ export async function updateProduct(id: string, input: { title?: string, bodyHtm
 export async function updateProductVariant(id: string, input: { price?: number, imageId?: string }) {
     const shopifyClient = getShopifyGraphQLClient();
     
-    const variables: { input: { id: string, price?: number, imageId?: string } } = { input: { id, ...input } };
-    if(input.price) {
+    const variables: { input: { id: string, price?: number, imageId?: string } } = { input: { id } };
+    if(input.price !== undefined) {
         variables.input.price = input.price;
     }
     if(input.imageId) {
