@@ -1,3 +1,4 @@
+
 'use server';
 
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
@@ -248,10 +249,6 @@ export async function createProduct(product: Product): Promise<{id: string, vari
         variants: [{
             price: product.price,
             sku: product.sku,
-            inventoryQuantities: product.inventory !== null ? {
-                availableQuantity: product.inventory,
-                // Hardcoding first location for now
-            } : undefined,
             inventoryPolicy: product.inventory === null ? 'CONTINUE' : 'DENY',
         }],
     };
@@ -307,9 +304,6 @@ export async function addProductVariant(product: Product): Promise<{id: string, 
         productId: productId,
         price: product.price,
         sku: product.sku,
-        inventoryQuantities: product.inventory !== null ? {
-                availableQuantity: product.inventory,
-        } : undefined,
         inventoryPolicy: product.inventory === null ? 'CONTINUE' : 'DENY',
     };
     
@@ -420,3 +414,5 @@ export async function updateInventoryLevel(inventoryItemId: string, quantity: nu
     }
     return response.body.data?.inventorySetOnHandQuantities?.inventoryAdjustmentGroup;
 }
+
+    
