@@ -152,6 +152,8 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
     );
 }
 
+const HANDLES_PER_PAGE = 20;
+
 export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: Summary, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
   const [isFixing, startTransition] = useTransition();
@@ -160,11 +162,13 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [reportData, setReportData] = useState<AuditResult[]>(data);
   const [reportSummary, setReportSummary] = useState<Summary>(summary);
   const [showRefresh, setShowRefresh] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     setReportData(data);
     setReportSummary(summary);
     setShowRefresh(false);
+    setCurrentPage(1); // Reset page on new data
   }, [data, summary]);
 
 
@@ -178,6 +182,13 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     acc[handle].push(item);
     return acc;
   }, {} as Record<string, AuditResult[]>);
+
+  const handleKeys = Object.keys(groupedByHandle);
+  const totalPages = Math.ceil(handleKeys.length / HANDLES_PER_PAGE);
+  const paginatedHandleKeys = handleKeys.slice(
+      (currentPage - 1) * HANDLES_PER_PAGE,
+      currentPage * HANDLES_PER_PAGE
+  );
 
   const handleDownload = () => {
     const csvData = reportData.map(item => ({
@@ -392,6 +403,11 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     )
   }
 
+  const handleFilterChange = (newFilter: FilterType) => {
+    setFilter(newFilter);
+    setCurrentPage(1);
+  }
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -456,15 +472,15 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => {
                 const config = statusConfig[f as keyof typeof statusConfig];
                  const count = f === 'all' 
-                    ? reportData.length 
+                    ? filteredData.length 
                     : (reportSummary as any)[f];
 
                 // Don't render filter button if there are no items for that status
                 if (count === 0 && f !== 'all') return null;
 
                 return (
-                    <Button key={f} variant={filter === f ? 'default' : 'outline'} size="sm" onClick={() => setFilter(f)} disabled={isFixing}>
-                       {f === 'all' ? 'All' : config.text} ({count})
+                    <Button key={f} variant={filter === f ? 'default' : 'outline'} size="sm" onClick={() => handleFilterChange(f)} disabled={isFixing}>
+                       {f === 'all' ? 'All' : config.text} ({f === 'all' ? handleKeys.length : count})
                     </Button>
                 )
              })}
@@ -476,9 +492,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           </div>
         </div>
         <div className="rounded-md border">
-            {Object.keys(groupedByHandle).length > 0 ? (
+            {paginatedHandleKeys.length > 0 ? (
                 <Accordion type="multiple" className="w-full">
-                    {Object.entries(groupedByHandle).map(([handle, items]) => {
+                    {paginatedHandleKeys.map((handle) => {
+                         const items = groupedByHandle[handle];
                          const productTitle = items[0].csvProduct?.name || items[0].shopifyProduct?.name || handle;
                          const hasMismatch = items.some(i => i.status === 'mismatched');
                          const isMissing = items.every(i => i.status === 'missing_in_shopify');
@@ -653,7 +670,33 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 </div>
             )}
         </div>
+
+        {totalPages > 1 && (
+            <div className="flex items-center justify-end gap-4 mt-4">
+                <span className="text-sm text-muted-foreground">
+                    Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1 || isFixing}
+                >
+                    Previous
+                </Button>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages || isFixing}
+                >
+                    Next
+                </Button>
+            </div>
+        )}
       </CardContent>
     </Card>
   );
 }
+
+    
