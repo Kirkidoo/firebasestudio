@@ -2,8 +2,8 @@
 
 'use client';
 
-import { useState, useTransition, useEffect, useMemo } from 'react';
-import { AuditResult, AuditStatus, DuplicateSku, MismatchDetail, Product, Summary, ShopifyProductImage } from '@/lib/types';
+import { useState, useTransition, useEffect, useMemo, useCallback } from 'react';
+import { AuditResult, AuditStatus, DuplicateSku, MismatchDetail, Product, ShopifyProductImage } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -37,13 +37,13 @@ const statusConfig: { [key in Exclude<AuditStatus, 'matched'>]: { icon: React.El
 
 const getHandle = (item: AuditResult) => item.csvProduct?.handle || item.shopifyProduct?.handle || `no-handle-${item.sku}`;
 
-const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled }: { mismatches: MismatchDetail[], onFix: (fixType: MismatchDetail['field']) => void, onMarkAsFixed: (fixType: MismatchDetail['field']) => void, disabled: boolean }) => {
+const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled, sku }: { mismatches: MismatchDetail[], onFix: (fixType: MismatchDetail['field']) => void, onMarkAsFixed: (fixType: MismatchDetail['field']) => void, disabled: boolean, sku: string }) => {
     return (
         <div className="flex flex-col gap-2 mt-2">
             {mismatches.map((mismatch, index) => {
                 const canBeFixed = mismatch.field !== 'duplicate_sku';
                 return (
-                     <div key={index} className="flex items-center gap-2 text-xs p-2 rounded-md bg-yellow-50 dark:bg-yellow-900/20">
+                     <div key={`${sku}-${mismatch.field}-${index}`} className="flex items-center gap-2 text-xs p-2 rounded-md bg-yellow-50 dark:bg-yellow-900/20">
                          <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
                         <div className="flex-grow">
                             <span className="font-semibold capitalize">{mismatch.field.replace(/_/g, ' ')}: </span> 
@@ -587,7 +587,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       }, { mismatched: 0, missing_in_shopify: 0, not_in_csv: 0 });
   }, [filteredData]);
   
-  const handleAccordionChange = (value: string) => {
+  const handleAccordionChange = useCallback((value: string) => {
     if (!value) return;
 
     const handle = value;
@@ -611,7 +611,11 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         });
       });
     }
-  };
+  }, [groupedByHandle, imageCounts, loadingImageCounts]);
+
+  const handleImageCountChange = useCallback((handle: string, count: number) => {
+      setImageCounts(prev => ({...prev, [handle]: count}));
+  }, []);
 
 
   return (
@@ -675,7 +679,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           <div className="flex flex-wrap gap-2">
             {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => {
                 const count = f === 'all' 
-                    ? filteredData.length
+                    ? handleKeys.length // Use handleKeys length for 'all' to count groups
                     : currentSummary[f];
                 const config = statusConfig[f as keyof typeof statusConfig];
                 if (count === 0 && f !== 'all') return null;
@@ -767,7 +771,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
         <div className="rounded-md border">
             {paginatedHandleKeys.length > 0 ? (
-                <Accordion type="single" collapsible className="w-full" onValueChange={(value) => handleAccordionChange(value)}>
+                <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
                     {paginatedHandleKeys.map((handle) => {
                          const items = groupedByHandle[handle];
                          const productTitle = items[0].csvProduct?.name || items[0].shopifyProduct?.name || handle;
@@ -793,7 +797,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
                         return (
                         <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
-                            <AccordionHeader className="items-center p-3 text-left">
+                             <AccordionHeader className="flex items-center p-3 text-left">
                                 {filter === 'mismatched' && (
                                     <div className="px-1">
                                         <Checkbox
@@ -803,7 +807,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                         />
                                     </div>
                                 )}
-                                <AccordionTrigger className="w-full" disabled={isFixing}>
+                                <AccordionTrigger className="flex-grow" disabled={isFixing}>
                                     <div className="flex items-center gap-4 flex-grow">
                                         <config.icon className={`w-5 h-5 shrink-0 ${
                                             overallStatus === 'mismatched' ? 'text-yellow-500' 
@@ -843,7 +847,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                             </DialogTrigger>
                                             <MediaManager 
                                                 productId={items[0].shopifyProduct!.id}
-                                                onImageCountChange={(count) => setImageCounts(prev => ({...prev, [handle]: count}))}
+                                                onImageCountChange={(count) => handleImageCountChange(handle, count)}
                                                 initialImageCount={imageCounts[handle]}
                                             />
                                         </Dialog>
@@ -888,6 +892,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                         <div>
                                                             {item.status === 'mismatched' && item.mismatches.length > 0 && 
                                                                 <MismatchDetails 
+                                                                    sku={item.sku}
                                                                     mismatches={item.mismatches} 
                                                                     onFix={(fixType) => handleFixSingleMismatch(item, fixType)} 
                                                                     onMarkAsFixed={(fixType) => handleMarkAsFixed(item.sku, fixType)}

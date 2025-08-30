@@ -46,7 +46,6 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
             const data = await getProductWithImages(productId);
             setVariants(data.variants);
             setImages(data.images);
-            onImageCountChange(data.images.length);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load media data.');
         } finally {
@@ -55,17 +54,15 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
     };
 
     useEffect(() => {
-        if(initialImageCount === undefined) {
-          fetchMediaData();
-        } else {
-            // Data might already be loaded by parent, but let's re-verify
-            fetchMediaData();
-        }
+        fetchMediaData();
     }, [productId]);
     
     useEffect(() => {
-        onImageCountChange(images.length);
-    }, [images, onImageCountChange]);
+        // Only call the callback if the image count has actually changed
+        if (initialImageCount !== images.length) {
+            onImageCountChange(images.length);
+        }
+    }, [images, onImageCountChange, initialImageCount]);
 
     const handleImageSelection = (imageId: number, checked: boolean) => {
         const newSet = new Set(selectedImageIds);
