@@ -1,14 +1,14 @@
 
 'use client';
 
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition, useEffect, useMemo } from 'react';
 import { AuditResult, AuditStatus, DuplicateSku, MismatchDetail, Product, Summary } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2 } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -16,6 +16,11 @@ import { fixMismatch, createInShopify, deleteFromShopify, deleteVariantFromShopi
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 
 type FilterType = 'all' | 'mismatched' | 'missing_in_shopify' | 'not_in_csv';
@@ -72,7 +77,7 @@ const MissingProductDetailsDialog = ({ product }: { product: Product }) => {
         { label: "Variant Image", value: product.mediaUrl, notes: "From 'Variant Image' column. Will be assigned to this variant." },
         { label: "Variant Price", value: `$${product.price?.toFixed(2)}`, notes: "From 'Price' column" },
         { label: "Variant Compare At Price", value: product.compareAtPrice ? `$${product.compareAtPrice.toFixed(2)}` : 'N/A', notes: "From 'Compare At Price' column" },
-        { label: "Variant Cost", value: product.costPerItem ? `$${product.costPerItem.toFixed(2)}` : 'N/A', notes: "From 'Cost Per Item' column" },
+        { label: "Variant Cost", value: product.costPerItem ? `$${product.costPerItem.toFixed(2) ?? 'N/A'}` : 'N/A', notes: "From 'Cost Per Item' column" },
         { label: "Variant Barcode (GTIN)", value: product.barcode || 'N/A', notes: "From 'Variant Barcode' column" },
         { label: "Variant Weight", value: product.weight ? `${(product.weight / 453.592).toFixed(2)} lbs` : 'N/A', notes: "From 'Variant Grams' column. Will be stored in Shopify as pounds." },
         { label: "Variant Inventory", value: product.inventory, notes: "From 'Variant Inventory Qty'. Will be set at 'Gamma Warehouse' location." },
@@ -150,9 +155,11 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
             </span>
         </div>
     );
-}
+};
 
 const HANDLES_PER_PAGE = 20;
+
+const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag'];
 
 export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: Summary, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
@@ -163,25 +170,75 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [reportSummary, setReportSummary] = useState<Summary>(summary);
   const [showRefresh, setShowRefresh] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [mismatchFilters, setMismatchFilters] = useState<Set<MismatchDetail['field']>>(new Set());
+  const [selectedVendor, setSelectedVendor] = useState<string>('all');
 
   useEffect(() => {
     setReportData(data);
     setReportSummary(summary);
     setShowRefresh(false);
-    setCurrentPage(1); // Reset page on new data
+    setCurrentPage(1);
   }, [data, summary]);
 
+  const uniqueVendors = useMemo(() => {
+    const vendors = new Set<string>();
+    data.forEach(item => {
+        if (item.status === 'not_in_csv' && item.shopifyProduct?.vendor) {
+            vendors.add(item.shopifyProduct.vendor);
+        }
+    });
+    return ['all', ...Array.from(vendors).sort()];
+  }, [data]);
 
-  const filteredData = reportData.filter(item => filter === 'all' || item.status === filter);
 
-  const groupedByHandle = filteredData.reduce((acc, item) => {
-    const handle = getHandle(item);
-    if (!acc[handle]) {
-      acc[handle] = [];
+  const filteredData = useMemo(() => {
+    let results = reportData;
+
+    // 1. Filter by main tab
+    if (filter !== 'all') {
+        results = results.filter(item => item.status === filter);
     }
-    acc[handle].push(item);
-    return acc;
-  }, {} as Record<string, AuditResult[]>);
+    
+    // 2. Filter by search term
+    if (searchTerm) {
+        const lowercasedTerm = searchTerm.toLowerCase();
+        results = results.filter(item => {
+            const product = item.csvProduct || item.shopifyProduct;
+            return (
+                item.sku.toLowerCase().includes(lowercasedTerm) ||
+                (product && product.handle.toLowerCase().includes(lowercasedTerm)) ||
+                (product && product.name.toLowerCase().includes(lowercasedTerm))
+            );
+        });
+    }
+
+    // 3. Apply tab-specific filters
+    if (filter === 'mismatched' && mismatchFilters.size > 0) {
+        results = results.filter(item => 
+            item.mismatches.some(mismatch => mismatchFilters.has(mismatch.field))
+        );
+    }
+    
+    if (filter === 'not_in_csv' && selectedVendor !== 'all') {
+        results = results.filter(item => item.shopifyProduct?.vendor === selectedVendor);
+    }
+
+
+    return results;
+  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor]);
+
+  const groupedByHandle = useMemo(() => {
+      return filteredData.reduce((acc, item) => {
+        const handle = getHandle(item);
+        if (!acc[handle]) {
+          acc[handle] = [];
+        }
+        acc[handle].push(item);
+        return acc;
+      }, {} as Record<string, AuditResult[]>);
+  }, [filteredData]);
+
 
   const handleKeys = Object.keys(groupedByHandle);
   const totalPages = Math.ceil(handleKeys.length / HANDLES_PER_PAGE);
@@ -224,7 +281,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           descriptionHtml: item.shopifyProduct.descriptionHtml,
       };
 
-      // Optimistic UI Update
       setShowRefresh(true);
       const originalData = [...reportData];
       
@@ -262,7 +318,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
               toast({ title: 'Success!', description: result.message });
           } else {
               toast({ title: 'Fix Failed', description: result.message, variant: 'destructive' });
-              // Revert on failure
               setReportData(originalData);
           }
       });
@@ -277,7 +332,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         return;
     }
     
-    // Find all variants with the same handle from the original full data set
     const allVariantsForHandle = data
       .filter(d => d.csvProduct?.handle === productToCreate.handle && d.status === 'missing_in_shopify')
       .map(d => d.csvProduct)
@@ -288,7 +342,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         return;
     }
     
-    // Optimistic UI Update
     setShowRefresh(true);
     const originalData = [...reportData];
     const handleToUpdate = productToCreate.handle;
@@ -317,8 +370,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             toast({ title: 'Success!', description: result.message });
         } else {
             toast({ title: 'Creation Failed', description: result.message, variant: 'destructive' });
-            setReportData(originalData); // Revert on failure
-            setReportSummary(summary); // Revert summary
+            setReportData(originalData);
+            setReportSummary(summary);
         }
     });
   };
@@ -330,7 +383,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           return;
       }
 
-      // Optimistic UI Update
       setShowRefresh(true);
       const originalData = [...reportData];
       const itemsInHandle = reportData.filter(d => d.shopifyProduct?.handle === productToDelete.handle).length;
@@ -348,7 +400,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
               toast({ title: 'Success!', description: result.message });
           } else {
               toast({ title: 'Delete Failed', description: result.message, variant: 'destructive' });
-              setReportData(originalData); // Revert on failure
+              setReportData(originalData);
               setReportSummary(summary);
           }
       });
@@ -361,7 +413,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           return;
       }
       
-      // Optimistic UI Update
       setShowRefresh(true);
       const originalData = [...reportData];
       const newData = reportData.filter(d => d.sku !== item.sku);
@@ -377,29 +428,20 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
               toast({ title: 'Success!', description: result.message });
           } else {
               toast({ title: 'Delete Failed', description: result.message, variant: 'destructive' });
-              setReportData(originalData); // Revert on failure
+              setReportData(originalData);
               setReportSummary(summary);
           }
       });
   };
 
-
-  const mismatchIcons: Record<MismatchDetail['field'], React.ReactElement> = {
-    name: <TooltipContent>Name</TooltipContent>,
-    price: <TooltipContent>Price</TooltipContent>,
-    inventory: <TooltipContent>Inventory</TooltipContent>,
-    h1_tag: <TooltipContent>H1 Tag</TooltipContent>,
-    missing_in_shopify: <TooltipContent>Missing</TooltipContent>,
-  };
-
   const MismatchIcon = ({field}: {field: MismatchDetail['field']}) => {
-    const icons = {
+    const icons: { [key in MismatchDetail['field']]: React.ReactNode } = {
       name: <Text className="h-4 w-4" />,
       price: <DollarSign className="h-4 w-4" />,
       inventory: <List className="h-4 w-4" />,
       h1_tag: <span className="text-xs font-bold">H1</span>,
       missing_in_shopify: <XCircle className="h-4 w-4" />,
-    }
+    };
     return (
         <TooltipProvider>
           <Tooltip>
@@ -419,7 +461,23 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const handleFilterChange = (newFilter: FilterType) => {
     setFilter(newFilter);
     setCurrentPage(1);
+    setSearchTerm('');
+    setMismatchFilters(new Set());
+    setSelectedVendor('all');
   }
+  
+  const handleMismatchFilterChange = (field: MismatchDetail['field'], checked: boolean) => {
+    setCurrentPage(1);
+    setMismatchFilters(prev => {
+        const newSet = new Set(prev);
+        if (checked) {
+            newSet.add(field);
+        } else {
+            newSet.delete(field);
+        }
+        return newSet;
+    });
+  };
 
   return (
     <Card className="w-full">
@@ -484,18 +542,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           <div className="flex flex-wrap gap-2">
             {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => {
                 const config = statusConfig[f as keyof typeof statusConfig];
-                 const count = f === 'all' 
-                    ? reportData.length 
-                    : (reportSummary as any)[f];
-                
-                 const handleCount = f === 'all' ? handleKeys.length : Object.keys(groupedByHandle).length
-
-                // Don't render filter button if there are no items for that status
+                const count = f === 'all' ? reportData.length : (reportSummary as any)[f];
                 if (count === 0 && f !== 'all') return null;
 
                 return (
                     <Button key={f} variant={filter === f ? 'default' : 'outline'} size="sm" onClick={() => handleFilterChange(f)} disabled={isFixing}>
-                       {f === 'all' ? 'All' : config.text} ({f === 'all' ? handleKeys.length : handleCount})
+                       {f === 'all' ? 'All Items' : config.text} ({count})
                     </Button>
                 )
              })}
@@ -506,6 +558,65 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             <Button onClick={handleDownload} disabled={isFixing}><Download className="mr-2 h-4 w-4" />Download Report</Button>
           </div>
         </div>
+
+        <div className="flex flex-col md:flex-row gap-4 mb-4 p-4 border rounded-lg">
+            <div className="relative flex-grow">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                    placeholder="Filter by Handle, SKU, or Title..."
+                    value={searchTerm}
+                    onChange={(e) => {
+                        setCurrentPage(1);
+                        setSearchTerm(e.target.value);
+                    }}
+                    className="pl-10"
+                    disabled={isFixing}
+                />
+            </div>
+            {filter === 'mismatched' && (
+                 <Popover>
+                    <PopoverTrigger asChild>
+                        <Button variant="outline" className="w-full md:w-auto">
+                            <List className="mr-2 h-4 w-4" />
+                            Filter Mismatches ({mismatchFilters.size > 0 ? `${mismatchFilters.size} selected` : 'All'})
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-56 p-4">
+                        <div className="space-y-4">
+                            <h4 className="font-medium leading-none">Mismatch Types</h4>
+                            <div className="space-y-2">
+                                {MISMATCH_FILTER_TYPES.map(type => (
+                                    <div key={type} className="flex items-center space-x-2">
+                                        <Checkbox
+                                            id={type}
+                                            checked={mismatchFilters.has(type)}
+                                            onCheckedChange={(checked) => handleMismatchFilterChange(type, !!checked)}
+                                        />
+                                        <Label htmlFor={type} className="font-normal capitalize">{type.replace('_', ' ')}</Label>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </PopoverContent>
+                </Popover>
+            )}
+            {filter === 'not_in_csv' && (
+                <Select value={selectedVendor} onValueChange={(value) => {setCurrentPage(1); setSelectedVendor(value)}}>
+                    <SelectTrigger className="w-full md:w-[200px]">
+                        <SelectValue placeholder="Filter by vendor..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {uniqueVendors.map(vendor => (
+                            <SelectItem key={vendor} value={vendor}>
+                                {vendor === 'all' ? 'All Vendors' : vendor}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            )}
+        </div>
+
+
         <div className="rounded-md border">
             {paginatedHandleKeys.length > 0 ? (
                 <Accordion type="multiple" className="w-full">
@@ -528,7 +639,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                          const overallStatus: AuditStatus = hasMismatch ? 'mismatched' 
                              : isMissing ? 'missing_in_shopify'
                              : notInCsv ? 'not_in_csv'
-                             : 'mismatched'; // Fallback, should not happen with current filter
+                             : 'mismatched';
                          
                          if (overallStatus === 'mismatched' && !hasMismatch && !isMissing && !notInCsv) {
                              return null;
@@ -660,7 +771,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                                     <AlertDialogTitle>Delete this entire product?</AlertDialogTitle>
                                                                     <AlertDialogDescription>
                                                                         All variants for "{productTitle}" are not in the CSV. This will permanently delete the entire product and its {items.length} variants from Shopify. This action cannot be undone.
-                                                                    </AlertDialogDescription>
+                                                                    </description>
                                                                 </AlertDialogHeader>
                                                                 <AlertDialogFooter>
                                                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -677,11 +788,15 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                 </Table>
                             </AccordionContent>
                         </AccordionItem>
-                    )})}
+                        )
+                    })}
                 </Accordion>
             ) : (
-                <div className="h-24 text-center flex items-center justify-center">
-                    No results for this filter.
+                <div className="h-48 text-center flex flex-col items-center justify-center text-muted-foreground">
+                    <Search className="h-10 w-10 mb-4" />
+                    <h3 className="font-semibold text-lg text-foreground">No Results Found</h3>
+                    <p>Your search or filter combination returned no results.</p>
+                    <p>Try adjusting your filters or clearing the search term.</p>
                 </div>
             )}
         </div>
@@ -713,5 +828,3 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </Card>
   );
 }
-
-    
