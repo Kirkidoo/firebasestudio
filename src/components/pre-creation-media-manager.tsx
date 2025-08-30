@@ -99,26 +99,28 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
 
     const availableOptions = useMemo(() => {
         const options = new Map<string, Set<string>>();
-        if (variants.length > 0) {
-            const firstVariant = variants[0];
-            const optionNames = {
-                option1: firstVariant.option1Name,
-                option2: firstVariant.option2Name,
-                option3: firstVariant.option3Name,
-            };
-
-            for (const [key, name] of Object.entries(optionNames)) {
-                if (name) {
-                    options.set(name, new Set());
+        
+        variants.forEach(variant => {
+            if (variant.option1Name && variant.option1Value) {
+                if (!options.has(variant.option1Name)) {
+                    options.set(variant.option1Name, new Set());
                 }
+                options.get(variant.option1Name)!.add(variant.option1Value);
             }
+            if (variant.option2Name && variant.option2Value) {
+                if (!options.has(variant.option2Name)) {
+                    options.set(variant.option2Name, new Set());
+                }
+                options.get(variant.option2Name)!.add(variant.option2Value);
+            }
+            if (variant.option3Name && variant.option3Value) {
+                if (!options.has(variant.option3Name)) {
+                    options.set(variant.option3Name, new Set());
+                }
+                options.get(variant.option3Name)!.add(variant.option3Value);
+            }
+        });
 
-            variants.forEach(variant => {
-                if (optionNames.option1 && variant.option1Value && options.has(optionNames.option1)) options.get(optionNames.option1)?.add(variant.option1Value);
-                if (optionNames.option2 && variant.option2Value && options.has(optionNames.option2)) options.get(optionNames.option2)?.add(variant.option2Value);
-                if (optionNames.option3 && variant.option3Value && options.has(optionNames.option3)) options.get(optionNames.option3)?.add(variant.option3Value);
-            });
-        }
         return options;
     }, [variants]);
 
