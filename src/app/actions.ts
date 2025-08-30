@@ -209,9 +209,14 @@ async function runAuditComparison(csvProducts: Product[], shopifyProducts: Produ
             if (csvProduct.price !== shopifyProduct.price) {
                 mismatches.push({ field: 'price', csvValue: csvProduct.price, shopifyValue: shopifyProduct.price });
             }
+
             if (csvProduct.inventory !== null && csvProduct.inventory !== shopifyProduct.inventory) {
-                mismatches.push({ field: 'inventory', csvValue: csvProduct.inventory, shopifyValue: shopifyProduct.inventory });
+                const isCappedInventory = csvProduct.inventory > 10 && shopifyProduct.inventory === 10;
+                if (!isCappedInventory) {
+                    mismatches.push({ field: 'inventory', csvValue: csvProduct.inventory, shopifyValue: shopifyProduct.inventory });
+                }
             }
+
             if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
                 mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
             }
