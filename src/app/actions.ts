@@ -1,11 +1,11 @@
 
 'use server';
 
-import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types';
+import { Product, AuditResult, DuplicateSku, MismatchDetail, ShopifyProductImage } from '@/lib/types';
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation, checkBulkOperationStatus, getBulkOperationResult, parseBulkOperationResult } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation, checkBulkOperationStatus, getBulkOperationResult, parseBulkOperationResult, getFullProduct, addProductImage, deleteProductImage } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 import fs from 'fs/promises';
 import path from 'path';
@@ -164,6 +164,7 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
                 id: '', // Shopify only
                 variantId: '', // Shopify only
                 inventoryItemId: '', // Shopify only
+                imageId: null, // Shopify only
             });
         }
     }
@@ -552,6 +553,90 @@ export async function deleteVariantFromShopify(productId: string, variantId: str
         return { success: true, message: `Successfully deleted variant ${variantId}`};
     } catch (error) {
         console.error(`Failed to delete variant ${variantId}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return { success: false, message };
+    }
+}
+
+
+// --- MEDIA ACTIONS ---
+
+export async function getProductWithImages(productId: string): Promise<{ variants: Product[], images: ShopifyProductImage[] }> {
+    try {
+        const numericProductId = parseInt(productId.split('/').pop() || '0', 10);
+        if (!numericProductId) {
+            throw new Error(`Invalid Product GID: ${productId}`);
+        }
+        const productData = await getFullProduct(numericProductId);
+        
+        const variants = productData.variants.map((v: any) => ({
+            id: productData.id,
+            variantId: `gid://shopify/ProductVariant/${v.id}`,
+            sku: v.sku,
+            name: productData.title, // Parent product title
+            price: parseFloat(v.price),
+            option1Value: v.option1,
+            option2Value: v.option2,
+            option3Value: v.option3,
+            imageId: v.image_id,
+        }));
+        
+        const images = productData.images.map((img: any) => ({
+            id: img.id,
+            productId: img.product_id,
+            src: img.src,
+            variant_ids: img.variant_ids,
+        }));
+
+        return { variants, images };
+    } catch(error) {
+        console.error(`Failed to get product with images for ID ${productId}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        throw new Error(message);
+    }
+}
+
+
+export async function addImageFromUrl(productId: string, imageUrl: string): Promise<{ success: boolean; message: string; image?: ShopifyProductImage }> {
+    try {
+        const numericProductId = parseInt(productId.split('/').pop() || '0', 10);
+        if (!numericProductId) {
+            throw new Error(`Invalid Product GID: ${productId}`);
+        }
+        const newImage = await addProductImage(numericProductId, imageUrl);
+        return { success: true, message: 'Image added successfully.', image: newImage };
+    } catch (error) {
+        console.error(`Failed to add image for product ${productId}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return { success: false, message };
+    }
+}
+
+export async function assignImageToVariant(variantId: string, imageId: number): Promise<{ success: boolean; message: string }> {
+     try {
+        const numericVariantId = parseInt(variantId.split('/').pop() || '0', 10);
+        if (!numericVariantId) {
+            throw new Error(`Invalid Variant GID: ${variantId}`);
+        }
+        await updateProductVariant(numericVariantId, { image_id: imageId });
+        return { success: true, message: 'Image assigned successfully.' };
+    } catch (error) {
+        console.error(`Failed to assign image ${imageId} to variant ${variantId}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return { success: false, message };
+    }
+}
+
+export async function deleteImage(productId: string, imageId: number): Promise<{ success: boolean; message: string }> {
+    try {
+        const numericProductId = parseInt(productId.split('/').pop() || '0', 10);
+        if (!numericProductId) {
+            throw new Error(`Invalid Product GID: ${productId}`);
+        }
+        await deleteProductImage(numericProductId, imageId);
+        return { success: true, message: 'Image deleted successfully.' };
+    } catch (error) {
+        console.error(`Failed to delete image ${imageId} from product ${productId}:`, error);
         const message = error instanceof Error ? error.message : 'An unknown error occurred.';
         return { success: false, message };
     }

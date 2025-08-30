@@ -1,4 +1,5 @@
 
+
 export interface Product {
   id: string; // Shopify Product GID
   variantId: string; // Shopify Variant GID
@@ -18,6 +19,7 @@ export interface Product {
   weight: number | null;
   mediaUrl: string | null;
   category: string | null; // For mapping to Shopify Collections
+  imageId: number | null; // Shopify Image ID
   option1Name: string | null;
   option1Value: string | null;
   option2Name: string | null;
@@ -53,4 +55,11 @@ export interface Summary {
   mismatched: number;
   not_in_csv: number;
   missing_in_shopify: number;
+}
+
+export interface ShopifyProductImage {
+  id: number;
+  product_id: number;
+  src: string;
+  variant_ids: number[];
 }

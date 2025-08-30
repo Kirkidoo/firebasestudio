@@ -4,7 +4,7 @@
 
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
 import '@shopify/shopify-api/adapters/node';
-import { Product } from '@/lib/types';
+import { Product, ShopifyProductImage } from '@/lib/types';
 import { Readable, Writable } from 'stream';
 import { createReadStream } from 'fs';
 import { S_IFREG } from 'constants';
@@ -43,6 +43,9 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
                 inventoryQuantity
                 inventoryItem {
                     id
+                }
+                image {
+                  id
                 }
               }
             }
@@ -271,6 +274,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                             barcode: null, // From CSV
                             weight: null, // From CSV
                             mediaUrl: productEdge.node.featuredImage?.url || null, // From CSV for variant matching
+                            imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
                             category: null, // From CSV
                             option1Name: null,
                             option1Value: null,
@@ -309,6 +313,17 @@ export async function getShopifyLocations(): Promise<{id: number; name: string}[
     } catch(error: any) {
         console.error("Error fetching Shopify locations:", error.response?.body || error);
         throw new Error(`Failed to fetch locations: ${JSON.stringify(error.response?.body?.errors || error.message)}`);
+    }
+}
+
+export async function getFullProduct(productId: number): Promise<any> {
+    const shopifyClient = getShopifyRestClient();
+    try {
+        const response: any = await shopifyClient.get({ path: `products/${productId}` });
+        return response.body.product;
+    } catch(error: any) {
+        console.error(`Error fetching full product for ID ${productId}:`, error.response?.body || error);
+        throw new Error(`Failed to fetch product: ${JSON.stringify(error.response?.body?.errors || error.message)}`);
     }
 }
 
@@ -697,6 +712,38 @@ export async function publishProductToSalesChannels(productGid: string): Promise
 }
 
 
+// --- MEDIA FUNCTIONS ---
+export async function addProductImage(productId: number, imageUrl: string): Promise<ShopifyProductImage> {
+    const shopifyClient = getShopifyRestClient();
+    try {
+        const response: any = await shopifyClient.post({
+            path: `products/${productId}/images`,
+            data: {
+                image: {
+                    src: imageUrl,
+                },
+            },
+        });
+        return response.body.image;
+    } catch (error: any) {
+        console.error(`Error adding image to product ${productId}:`, error.response?.body || error);
+        throw new Error(`Failed to add image: ${JSON.stringify(error.response?.body?.errors || error.message)}`);
+    }
+}
+
+export async function deleteProductImage(productId: number, imageId: number): Promise<void> {
+    const shopifyClient = getShopifyRestClient();
+    try {
+        await shopifyClient.delete({
+            path: `products/${productId}/images/${imageId}`,
+        });
+    } catch (error: any) {
+        console.error(`Error deleting image ${imageId} from product ${productId}:`, error.response?.body || error);
+        throw new Error(`Failed to delete image: ${JSON.stringify(error.response?.body?.errors || error.message)}`);
+    }
+}
+
+
 // --- BULK OPERATIONS ---
 
 export async function startProductExportBulkOperation(): Promise<{ id: string, status: string }> {
@@ -709,6 +756,8 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                         id
                         title
                         handle
+                        vendor
+                        productType
                         bodyHtml
                         variants {
                             edges {
@@ -719,6 +768,9 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                                     inventoryQuantity
                                     inventoryItem {
                                         id
+                                    }
+                                    image {
+                                      id
                                     }
                                 }
                             }
@@ -758,23 +810,49 @@ export async function checkBulkOperationStatus(id: string): Promise<{ id: string
 
     const operation = currentOpResponse.body.data?.currentBulkOperation;
     
-    // Case 1: No operation is running. This means ours is complete or failed.
-    if (!operation) {
-        console.log(`currentBulkOperation returned null. Assuming operation ${id} is complete and transitioning to download phase.`);
-        // To get the final result URL, we must now query the operation by its ID, as it's no longer 'current'.
-        // This is a simplified approach for now. A more robust solution might query the specific operation node.
-        return { id: id, status: 'COMPLETED' };
+    if (operation && operation.id !== id && operation.status === 'RUNNING') {
+        // A different operation is running. Our job is likely queued. Keep polling.
+        console.warn(`Polling for operation ${id}, but a different operation ${operation.id} is currently running. Continuing to poll.`);
+        return { id: id, status: 'RUNNING' };
     }
 
-    // Case 2: An operation is running. Check if it's the one we're waiting for.
-    if (operation.id === id) {
+    if (operation && operation.id === id) {
+        // Our operation is the current one. Return its status.
         return { id: operation.id, status: operation.status, resultUrl: operation.url };
     }
+
+    // If we get here, it means there's no running operation. Our job must be done (or failed/cancelled).
+    // We need to query for it specifically to get the final URL.
+    const specificOpQuery = `
+      query getSpecificBulkOperation($id: ID!) {
+        node(id: $id) {
+          ... on BulkOperation {
+            id
+            status
+            url
+            errorCode
+          }
+        }
+      }
+    `;
+    const specificOpResponse: any = await shopifyClient.query({
+        data: {
+            query: specificOpQuery,
+            variables: { id }
+        }
+    });
+
+    const specificOperation = specificOpResponse.body.data?.node;
+
+    if (specificOperation) {
+         if (specificOperation.status === 'FAILED') {
+            console.error(`Bulk operation ${id} failed with code: ${specificOperation.errorCode}`);
+         }
+         return { id: specificOperation.id, status: specificOperation.status, resultUrl: specificOperation.url };
+    }
     
-    // Case 3: A different operation is running. Ours is still queued or has been superseded.
-    // We continue to wait for our specific operation ID to either complete or for the current operation to finish.
-    console.warn(`Polling for operation ${id}, but a different operation ${operation.id} is currently running with status ${operation.status}. Will keep polling.`);
-    return { id: id, status: 'RUNNING' };
+    // If even the specific query fails, we have an issue.
+    throw new Error(`Could not retrieve status for bulk operation ${id}.`);
 }
 
 export async function getBulkOperationResult(url: string): Promise<string> {
@@ -820,14 +898,15 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     price: parseFloat(shopifyProduct.price),
                     inventory: shopifyProduct.inventoryQuantity,
                     descriptionHtml: parentProduct.bodyHtml,
-                    productType: null,
-                    vendor: null,
+                    productType: parentProduct.productType,
+                    vendor: parentProduct.vendor,
                     tags: null,
                     compareAtPrice: null,
                     costPerItem: null,
                     barcode: null,
                     weight: null,
                     mediaUrl: null, // Note: Bulk export doesn't easily link variant images
+                    imageId: shopifyProduct.image?.id ? parseInt(shopifyProduct.image.id.split('/').pop(), 10) : null,
                     category: null,
                     option1Name: null,
                     option1Value: null,

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { MediaManager } from '@/components/media-manager';
 
 
 type FilterType = 'all' | 'mismatched' | 'missing_in_shopify' | 'not_in_csv';
@@ -541,8 +542,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
           <div className="flex flex-wrap gap-2">
             {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => {
+                const count = f === 'all' 
+                    ? data.length
+                    : reportSummary[f];
                 const config = statusConfig[f as keyof typeof statusConfig];
-                const count = f === 'all' ? reportData.length : (reportSummary as any)[f];
                 if (count === 0 && f !== 'all') return null;
 
                 return (
@@ -636,23 +639,23 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                              });
                          }
 
-                         const overallStatus: AuditStatus = hasMismatch ? 'mismatched' 
+                         const overallStatus: AuditStatus | 'matched' = hasMismatch ? 'mismatched' 
                              : isMissing ? 'missing_in_shopify'
                              : notInCsv ? 'not_in_csv'
-                             : 'mismatched';
+                             : 'matched';
                          
-                         if (overallStatus === 'mismatched' && !hasMismatch && !isMissing && !notInCsv) {
+                         if (overallStatus === 'matched') {
                              return null;
                          }
 
                          const config = statusConfig[overallStatus];
-
+                         
                          const allVariantsForHandleInShopify = data.filter(d => d.shopifyProduct?.handle === handle);
                          const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
 
                         return (
                         <AccordionItem value={handle} key={handle}>
-                            <AccordionTrigger className="px-4 hover:no-underline" disabled={isFixing}>
+                            <AccordionTrigger className="px-4 py-2 hover:no-underline group" disabled={isFixing}>
                                 <div className="flex items-center gap-4 w-full">
                                     <config.icon className={`w-5 h-5 shrink-0 ${
                                             overallStatus === 'mismatched' ? 'text-yellow-500' 
@@ -663,14 +666,27 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                         <p className="font-semibold">{productTitle}</p>
                                         <p className="text-sm text-muted-foreground">{handle}</p>
                                     </div>
-                                    {hasMismatch && (
-                                        <div className="flex items-center gap-1.5 text-yellow-600">
-                                            {Array.from(uniqueMismatchTypes).map(field => (
-                                                <MismatchIcon key={field} field={field} />
-                                            ))}
-                                        </div>
-                                    )}
-                                    <Badge variant="outline" className="mr-4">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
+                                    <div className="flex items-center gap-4">
+                                        {hasMismatch && (
+                                            <div className="flex items-center gap-1.5 text-yellow-600">
+                                                {Array.from(uniqueMismatchTypes).map(field => (
+                                                    <MismatchIcon key={field} field={field} />
+                                                ))}
+                                            </div>
+                                        )}
+                                        <Badge variant="outline">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
+                                        { (item.shopifyProduct?.id) &&
+                                        <Dialog>
+                                            <DialogTrigger asChild>
+                                                <Button size="sm" variant="outline" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <ImageIcon className="mr-2 h-4 w-4" />
+                                                    Manage Media
+                                                </Button>
+                                            </DialogTrigger>
+                                            <MediaManager productId={items[0].shopifyProduct!.id} />
+                                        </Dialog>
+                                        }
+                                    </div>
                                 </div>
                             </AccordionTrigger>
                             <AccordionContent>
@@ -685,7 +701,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                     </TableHeader>
                                     <TableBody>
                                         {items.map((item, index) => {
-                                            const itemConfig = statusConfig[item.status];
+                                            const itemConfig = statusConfig[item.status as Exclude<AuditStatus, 'matched'>];
                                             const productForDetails = item.csvProduct || item.shopifyProduct;
                                             
                                             return (
@@ -771,7 +787,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                                     <AlertDialogTitle>Delete this entire product?</AlertDialogTitle>
                                                                     <AlertDialogDescription>
                                                                         All variants for "{productTitle}" are not in the CSV. This will permanently delete the entire product and its {items.length} variants from Shopify. This action cannot be undone.
-                                                                    </description>
+                                                                    </AlertDialogDescription>
                                                                 </AlertDialogHeader>
                                                                 <AlertDialogFooter>
                                                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -828,3 +844,4 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </Card>
   );
 }
+
