@@ -5,7 +5,10 @@
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
 import '@shopify/shopify-api/adapters/node';
 import { Product } from '@/lib/types';
-import { Readable } from 'stream';
+import { Readable, Writable } from 'stream';
+import { createReadStream } from 'fs';
+import { S_IFREG } from 'constants';
+import { request } from 'http';
 
 // Helper function to introduce a delay
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -116,43 +119,10 @@ const UPDATE_PRODUCT_MUTATION = `
     }
 `;
 
-const STAGED_UPLOADS_CREATE_MUTATION = `
-  mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-    stagedUploadsCreate(input: $input) {
-      stagedTargets {
-        url
-        resourceUrl
-        parameters {
-          name
-          value
-        }
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
 
-const BULK_PRODUCT_CREATE_MUTATION = `
-  mutation productBulkCreate($productInputs: [ProductInput!]!) {
-    productBulkCreate(products: $productInputs) {
-      products {
-        id
-        title
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
-
-const BULK_OPERATION_RUN_MUTATION = `
-  mutation bulkOperationRunMutation($mutation: String!, $stagedUploadPath: String!) {
-    bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $stagedUploadPath) {
+const BULK_OPERATION_RUN_QUERY_MUTATION = `
+  mutation bulkOperationRunQuery($query: String!) {
+    bulkOperationRunQuery(query: $query) {
       bulkOperation {
         id
         status
@@ -161,6 +131,21 @@ const BULK_OPERATION_RUN_MUTATION = `
         field
         message
       }
+    }
+  }
+`;
+
+const GET_BULK_OPERATION_STATUS_QUERY = `
+  query {
+    currentBulkOperation {
+      id
+      status
+      errorCode
+      createdAt
+      completedAt
+      objectCount
+      fileSize
+      url
     }
   }
 `;
@@ -714,54 +699,31 @@ export async function publishProductToSalesChannels(productGid: string): Promise
 
 // --- BULK OPERATIONS ---
 
-export async function prepareBulkImport(filename: string): Promise<{ uploadUrl: string; parameters: any[]; remoteKey: string; }> {
+export async function startProductExportBulkOperation(): Promise<{ id: string, status: string }> {
     const shopifyClient = getShopifyGraphQLClient();
-    const response: any = await shopifyClient.query({
-        data: {
-            query: STAGED_UPLOADS_CREATE_MUTATION,
-            variables: {
-                input: [{
-                    filename: filename,
-                    mimeType: "text/csv",
-                    httpMethod: "POST",
-                    resource: "BULK_MUTATION_VARIABLES"
-                }]
-            }
-        }
-    });
-
-    const userErrors = response.body.data?.stagedUploadsCreate?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        console.error("Error preparing staged upload:", userErrors);
-        throw new Error(`Failed to prepare staged upload: ${userErrors[0].message}`);
-    }
-
-    const stagedTarget = response.body.data?.stagedUploadsCreate?.stagedTargets[0];
-    if (!stagedTarget) {
-        throw new Error("Could not get a staged upload target from Shopify.");
-    }
-    
-    // The resourceUrl is the key we use to start the mutation.
-    const remoteKey = stagedTarget.resourceUrl; 
-
-    return { uploadUrl: stagedTarget.url, parameters: stagedTarget.parameters, remoteKey };
-}
-
-export async function startBulkImport(stagedUploadKey: string): Promise<void> {
-    const shopifyClient = getShopifyGraphQLClient();
-
-    // Note: The mutation string itself is a variable. Shopify's bulk operation
-    // will execute this mutation for each line in the uploaded file.
-    const mutation = `
-        mutation productCreate($input: ProductInput!) {
-            productCreate(input: $input) {
-                product {
-                    id
-                    title
-                }
-                userErrors {
-                    field
-                    message
+    const query = `
+        query {
+            products {
+                edges {
+                    node {
+                        id
+                        title
+                        handle
+                        bodyHtml
+                        variants {
+                            edges {
+                                node {
+                                    id
+                                    sku
+                                    price
+                                    inventoryQuantity
+                                    inventoryItem {
+                                        id
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -769,26 +731,101 @@ export async function startBulkImport(stagedUploadKey: string): Promise<void> {
 
     const response: any = await shopifyClient.query({
         data: {
-            query: BULK_OPERATION_RUN_MUTATION,
-            variables: {
-                mutation: mutation,
-                stagedUploadPath: stagedUploadKey
-            }
-        }
+            query: BULK_OPERATION_RUN_QUERY_MUTATION,
+            variables: { query },
+        },
     });
 
-    const userErrors = response.body.data?.bulkOperationRunMutation?.userErrors;
+    const userErrors = response.body.data?.bulkOperationRunQuery?.userErrors;
     if (userErrors && userErrors.length > 0) {
-        console.error("Error starting bulk import:", userErrors);
-        throw new Error(`Failed to start bulk import: ${userErrors[0].message}`);
+        throw new Error(`Failed to start bulk operation: ${userErrors[0].message}`);
     }
 
-    const bulkOperation = response.body.data?.bulkOperationRunMutation?.bulkOperation;
-    if (!bulkOperation || bulkOperation.status !== 'CREATED') {
-        console.error("Bulk operation was not created successfully:", bulkOperation);
-        throw new Error("Failed to create the bulk operation job on Shopify.");
+    const bulkOperation = response.body.data?.bulkOperationRunQuery?.bulkOperation;
+    if (!bulkOperation) {
+        throw new Error("Could not start bulk operation.");
+    }
+    
+    return bulkOperation;
+}
+
+export async function checkBulkOperationStatus(id: string): Promise<{ id: string, status: string, resultUrl?: string }> {
+    const shopifyClient = getShopifyGraphQLClient();
+    // We pass the ID to the query, but the query itself is for the *current* operation.
+    // This is a Shopify API design choice.
+    const response: any = await shopifyClient.query({
+        data: { query: GET_BULK_OPERATION_STATUS_QUERY },
+    });
+
+    const operation = response.body.data?.currentBulkOperation;
+    if (!operation) {
+        throw new Error("Could not retrieve bulk operation status.");
     }
 
-    console.log(`Bulk operation created with ID: ${bulkOperation.id} and status: ${bulkOperation.status}`);
+    // Ensure we're checking the status of the operation we started
+    if (operation.id !== id) {
+        console.warn(`Polling for operation ${id}, but current operation is ${operation.id}. Assuming previous job is still running.`);
+        return { id: id, status: 'RUNNING' };
+    }
+
+    return { id: operation.id, status: operation.status, resultUrl: operation.url };
+}
+
+export async function getBulkOperationResult(url: string): Promise<Product[]> {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to download bulk operation result from ${url}`);
+    }
+
+    const text = await response.text();
+    const lines = text.split('\n').filter(line => line.trim() !== '');
+    const products: Product[] = [];
+
+    for (const line of lines) {
+        const shopifyProduct = JSON.parse(line);
+        
+        // The result is nested. The product is the child of the `__parentId` variant.
+        // We need to find the parent product for each variant.
+        if (shopifyProduct.id.includes('gid://shopify/ProductVariant')) {
+            const variantId = shopifyProduct.id;
+            const sku = shopifyProduct.sku;
+            const parentId = shopifyProduct.__parentId;
+            
+            // This is inefficient but necessary with the JSONL structure.
+            // A better approach for huge datasets might be to build a map first.
+            const parentProductLine = lines.find(l => l.includes(`"id":"${parentId}"`));
+            
+            if (parentProductLine && sku) {
+                const parentProduct = JSON.parse(parentProductLine);
+                products.push({
+                    id: parentProduct.id,
+                    variantId: variantId,
+                    inventoryItemId: shopifyProduct.inventoryItem?.id,
+                    handle: parentProduct.handle,
+                    sku: sku,
+                    name: parentProduct.title,
+                    price: parseFloat(shopifyProduct.price),
+                    inventory: shopifyProduct.inventoryQuantity,
+                    descriptionHtml: parentProduct.bodyHtml,
+                    productType: null,
+                    vendor: null,
+                    tags: null,
+                    compareAtPrice: null,
+                    costPerItem: null,
+                    barcode: null,
+                    weight: null,
+                    mediaUrl: null,
+                    category: null,
+                    option1Name: null,
+                    option1Value: null,
+                    option2Name: null,
+                    option2Value: null,
+                    option3Name: null,
+                    option3Value: null,
+                });
+            }
+        }
+    }
+    return products;
 }
     

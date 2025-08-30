@@ -5,7 +5,7 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation, checkBulkOperationStatus, getBulkOperationResult } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
@@ -167,10 +167,86 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
     return { products: records, duplicates };
 }
 
+async function runAuditComparison(csvProducts: Product[], shopifyProducts: Product[]): Promise<{ report: AuditResult[], summary: any }> {
+    const csvProductMap = new Map(csvProducts.map(p => [p.sku, p]));
+    console.log(`Created map with ${csvProductMap.size} products from CSV.`);
+
+    const shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
+    const shopifyHandleSet = new Set(shopifyProducts.map(p => p.handle));
+    console.log(`Created map with ${shopifyProductMap.size} products from Shopify.`);
+
+    console.log('Running audit comparison logic...');
+    const report: AuditResult[] = [];
+    let matchedCount = 0;
+    const summary = { mismatched: 0, not_in_csv: 0, missing_in_shopify: 0 };
+
+    for (const csvProduct of csvProducts) {
+        const shopifyProduct = shopifyProductMap.get(csvProduct.sku);
+
+        if (shopifyProduct) {
+            const mismatches: MismatchDetail[] = [];
+            if (csvProduct.name !== shopifyProduct.name) {
+                mismatches.push({ field: 'name', csvValue: csvProduct.name, shopifyValue: shopifyProduct.name });
+            }
+            if (csvProduct.price !== shopifyProduct.price) {
+                mismatches.push({ field: 'price', csvValue: csvProduct.price, shopifyValue: shopifyProduct.price });
+            }
+            if (csvProduct.inventory !== null && csvProduct.inventory !== shopifyProduct.inventory) {
+                mismatches.push({ field: 'inventory', csvValue: csvProduct.inventory, shopifyValue: shopifyProduct.inventory });
+            }
+            if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
+                mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
+            }
+
+            if (mismatches.length > 0) {
+                report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct, status: 'mismatched', mismatches });
+                summary.mismatched++;
+            } else {
+                matchedCount++;
+            }
+            shopifyProductMap.delete(csvProduct.sku);
+        } else {
+            const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
+            report.push({
+                sku: csvProduct.sku,
+                csvProduct,
+                shopifyProduct: null,
+                status: 'missing_in_shopify',
+                mismatches: [{
+                    field: 'missing_in_shopify',
+                    csvValue: `SKU: ${csvProduct.sku}`,
+                    shopifyValue: null,
+                    missingType: missingType,
+                }]
+            });
+            summary.missing_in_shopify++;
+        }
+    }
+
+    for (const shopifyProduct of shopifyProductMap.values()) {
+        report.push({ sku: shopifyProduct.sku, csvProduct: null, shopifyProduct, status: 'not_in_csv', mismatches: [] });
+        summary.not_in_csv++;
+    }
+
+    report.sort((a, b) => {
+        const handleA = a.csvProduct?.handle || a.shopifyProduct?.handle || '';
+        const handleB = b.csvProduct?.handle || b.shopifyProduct?.handle || '';
+        if (handleA !== handleB) {
+            return handleA.localeCompare(handleB);
+        }
+        return a.sku.localeCompare(b.sku);
+    });
+    console.log('Audit comparison complete. Matched:', matchedCount, 'Summary:', summary);
+
+    const finalReport = report.filter(item => item.status !== 'matched');
+
+    return { report: finalReport, summary: { ...summary, matched: matchedCount } };
+}
+
+
 export async function runAudit(csvFileName: string, ftpData: FormData): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
   console.log(`Starting audit for file: ${csvFileName}`);
   
-  // 1. Fetch and parse CSV from FTP
   let csvProducts: Product[] = [];
   let duplicateSkus: DuplicateSku[] = [];
 
@@ -189,89 +265,65 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
     throw new Error('No products with valid Handle, SKU, Title, and Price found in the CSV file.');
   }
 
-  const csvProductMap = new Map(csvProducts.map(p => [p.sku, p]));
-  console.log(`Created map with ${csvProductMap.size} products from CSV.`);
-
-  // 2. Fetch products from Shopify using the SKUs from the CSV
-  const skusFromCsv = Array.from(csvProductMap.keys());
+  const skusFromCsv = csvProducts.map(p => p.sku);
   console.log(`Fetching ${skusFromCsv.length} products from Shopify based on CSV SKUs...`);
   const shopifyProducts = await getShopifyProductsBySku(skusFromCsv);
-  const shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
-  const shopifyHandleSet = new Set(shopifyProducts.map(p => p.handle));
-  console.log(`Created map with ${shopifyProductMap.size} products from Shopify.`);
-
-
-  // 3. Run audit logic
-  console.log('Running audit comparison logic...');
-  const report: AuditResult[] = [];
-  let matchedCount = 0;
-  const summary = { mismatched: 0, not_in_csv: 0, missing_in_shopify: 0 };
-
-  // Iterate over the CSV products (source of truth)
-  for (const csvProduct of csvProducts) {
-    const shopifyProduct = shopifyProductMap.get(csvProduct.sku);
-
-    if (shopifyProduct) {
-      const mismatches: MismatchDetail[] = [];
-      if (csvProduct.name !== shopifyProduct.name) {
-          mismatches.push({ field: 'name', csvValue: csvProduct.name, shopifyValue: shopifyProduct.name });
-      }
-      if (csvProduct.price !== shopifyProduct.price) {
-          mismatches.push({ field: 'price', csvValue: csvProduct.price, shopifyValue: shopifyProduct.price });
-      }
-       if (csvProduct.inventory !== null && csvProduct.inventory !== shopifyProduct.inventory) {
-          mismatches.push({ field: 'inventory', csvValue: csvProduct.inventory, shopifyValue: shopifyProduct.inventory });
-      }
-      if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
-           mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
-      }
-
-      if (mismatches.length > 0) {
-        report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct, status: 'mismatched', mismatches });
-        summary.mismatched++;
-      } else {
-        matchedCount++;
-      }
-      // Remove from Shopify map to find what's left
-      shopifyProductMap.delete(csvProduct.sku); 
-    } else {
-      const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
-      report.push({ 
-        sku: csvProduct.sku, 
-        csvProduct, 
-        shopifyProduct: null, 
-        status: 'missing_in_shopify', 
-        mismatches: [{
-          field: 'missing_in_shopify',
-          csvValue: `SKU: ${csvProduct.sku}`,
-          shopifyValue: null,
-          missingType: missingType,
-        }] 
-      });
-      summary.missing_in_shopify++;
-    }
-  }
-
-  // Any remaining products in the Shopify map were not in the CSV
-  for (const shopifyProduct of shopifyProductMap.values()) {
-      report.push({ sku: shopifyProduct.sku, csvProduct: null, shopifyProduct, status: 'not_in_csv', mismatches: [] });
-      summary.not_in_csv++;
-  }
   
-  report.sort((a, b) => {
-    const handleA = a.csvProduct?.handle || a.shopifyProduct?.handle || '';
-    const handleB = b.csvProduct?.handle || b.shopifyProduct?.handle || '';
-    if (handleA !== handleB) {
-      return handleA.localeCompare(handleB);
+  const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts);
+
+  return { report, summary, duplicates: duplicateSkus };
+}
+
+export async function runBulkAudit(
+    csvFileName: string, 
+    ftpData: FormData,
+    onProgress: (message: string) => void
+): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
+    onProgress('Downloading and parsing CSV file from FTP...');
+    let csvProducts: Product[] = [];
+    let duplicateSkus: DuplicateSku[] = [];
+
+    try {
+        const readableStream = await getCsvStreamFromFtp(csvFileName, ftpData);
+        const parsedData = await parseCsvFromStream(readableStream);
+        csvProducts = parsedData.products;
+        duplicateSkus = parsedData.duplicates;
+    } catch (error) {
+        console.error("Failed to download or parse CSV from FTP", error);
+        throw new Error(`Could not download or process file '${csvFileName}' from FTP.`);
     }
-    return a.sku.localeCompare(b.sku);
-  });
-  console.log('Audit comparison complete. Matched:', matchedCount, 'Summary:', summary);
 
-  // Filter out matched items before returning
-  const finalReport = report.filter(item => item.status !== 'matched');
+    if (csvProducts.length === 0) {
+        throw new Error('No products with valid Handle, SKU, Title, and Price found in the CSV file.');
+    }
 
-  return { report: finalReport, summary: {...summary, matched: matchedCount }, duplicates: duplicateSkus };
+    onProgress('Requesting product export from Shopify. This may take several minutes...');
+    const operation = await startProductExportBulkOperation();
+    console.log(`Bulk operation started: ${operation.id}`);
+
+    let operationStatus = operation;
+    while(operationStatus.status === 'RUNNING' || operationStatus.status === 'CREATED') {
+        onProgress(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
+        operationStatus = await checkBulkOperationStatus(operation.id);
+        console.log(`Polling bulk operation status: ${operationStatus.status}`);
+    }
+
+    if (operationStatus.status !== 'COMPLETED') {
+        throw new Error(`Shopify bulk operation failed or was cancelled. Status: ${operationStatus.status}`);
+    }
+    
+    if(!operationStatus.resultUrl) {
+         throw new Error(`Shopify bulk operation completed, but did not provide a result URL.`);
+    }
+
+    onProgress('Downloading and processing exported data from Shopify...');
+    const shopifyProducts = await getBulkOperationResult(operationStatus.resultUrl);
+    
+    onProgress('Generating audit report...');
+    const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts);
+
+    return { report, summary, duplicates: duplicateSkus };
 }
 
 
@@ -465,4 +517,5 @@ export async function deleteVariantFromShopify(productId: string, variantId: str
     
 
     
+
 

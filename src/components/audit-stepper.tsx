@@ -7,7 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Frown, Loader2, LogIn, Server, FileText } from 'lucide-react';
 
-import { connectToFtp, listCsvFiles, runAudit } from '@/app/actions';
+import { connectToFtp, listCsvFiles, runAudit, runBulkAudit } from '@/app/actions';
 import { AuditResult, DuplicateSku } from '@/lib/types';
 import AuditReport from '@/components/audit-report';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,8 @@ const defaultFtpCredentials = {
   username: 'ghs@gammasales.com',
   password: 'GHSaccess368!',
 };
+
+const BULK_IMPORT_FILE = 'ShopifyProductImport.csv';
 
 export default function AuditStepper() {
   const [step, setStep] = useState<Step>('connect');
@@ -80,7 +82,13 @@ export default function AuditStepper() {
         return;
     }
     setStep('auditing');
-    setProgressMessage('Starting audit... This may take a moment, especially for large files.');
+    
+    const isBulk = selectedCsv === BULK_IMPORT_FILE;
+    const initialMessage = isBulk 
+        ? 'Starting bulk audit...'
+        : 'Starting audit... This may take a moment.';
+    
+    setProgressMessage(initialMessage);
     
     startTransition(async () => {
       try {
@@ -90,7 +98,19 @@ export default function AuditStepper() {
         ftpData.append('username', values.username);
         ftpData.append('password', values.password);
         
-        const result = await runAudit(selectedCsv, ftpData);
+        let result;
+        if (isBulk) {
+            result = await runBulkAudit(selectedCsv, ftpData, (message) => {
+                // This is a callback to update progress message from the server
+                startTransition(() => {
+                    setProgressMessage(message);
+                });
+            });
+        } else {
+            setProgressMessage('Processing file... This may take a moment for large files.');
+            result = await runAudit(selectedCsv, ftpData);
+        }
+
         setAuditData(result);
         setProgressMessage('Report generated!');
         setTimeout(() => setStep('report'), 500);
@@ -196,6 +216,14 @@ export default function AuditStepper() {
                     {csvFiles.map(file => <SelectItem key={file} value={file}>{file}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                 {selectedCsv === BULK_IMPORT_FILE && (
+                    <Alert className="mt-4">
+                        <AlertTitle>Bulk Audit Mode</AlertTitle>
+                        <AlertDescription>
+                            This large file will be compared against all products in your Shopify store. The process may take several minutes.
+                        </AlertDescription>
+                    </Alert>
+                )}
               </FormItem>
             </form>
           </Form>
