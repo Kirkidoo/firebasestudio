@@ -22,6 +22,14 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
           title
           handle
           bodyHtml
+          priceRange {
+            minVariantPrice {
+              amount
+            }
+          }
+          featuredImage {
+            url
+          }
           variants(first: 10) {
             edges {
               node {
@@ -184,6 +192,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     const products: Product[] = [];
     const skuBatches: string[][] = [];
 
+    // Reduce batch size to avoid hitting query complexity limits
     for (let i = 0; i < skus.length; i += 40) {
         skuBatches.push(skus.slice(i, i + 40));
     }
@@ -195,7 +204,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
         const query = batch.map(sku => `sku:${JSON.stringify(sku)}`).join(' OR ');
         
         try {
-            await sleep(500); 
+            await sleep(500); // Rate limiting
 
             const response: any = await shopifyClient.query({
                 data: {
@@ -208,9 +217,11 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
             
             if (response.body.errors) {
               console.error('GraphQL Errors:', response.body.errors);
+              // Handle throttling specifically
               if (JSON.stringify(response.body.errors).includes('Throttled')) {
                  console.log("Throttled by Shopify, waiting 5 seconds before retrying...");
                  await sleep(5000);
+                 // Optionally, you could retry the same batch here
               }
             }
 
@@ -230,15 +241,15 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                             price: parseFloat(variant.price),
                             inventory: variant.inventoryQuantity,
                             descriptionHtml: productEdge.node.bodyHtml,
-                            productType: null,
-                            vendor: null,
-                            tags: null, 
-                            compareAtPrice: null,
-                            costPerItem: null,
-                            barcode: null,
-                            weight: null,
-                            mediaUrl: null,
-                            category: null,
+                            productType: null, // Will be derived from tags in CSV
+                            vendor: null, // From CSV
+                            tags: null, // From CSV
+                            compareAtPrice: null, // From CSV
+                            costPerItem: null, // From CSV
+                            barcode: null, // From CSV
+                            weight: null, // From CSV
+                            mediaUrl: productEdge.node.featuredImage?.url || null, // From CSV for variant matching
+                            category: null, // From CSV
                             option1Name: null,
                             option1Value: null,
                             option2Name: null,
@@ -258,6 +269,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                 console.log("Caught throttled error, waiting 5 seconds before retrying...");
                 await sleep(5000);
             } else {
+               // For other errors, log and continue to the next batch
                console.error("An unexpected error occurred while fetching a batch. Skipping to next.", error);
             }
         }
@@ -293,6 +305,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
 
     const getOptionValue = (value: string | null | undefined, fallback: string) => (value?.trim() ? value.trim() : fallback);
 
+    // Determine unique option names from the first variant
     const optionNames: string[] = [];
     if (firstVariant.option1Name && !isSingleDefaultVariant) optionNames.push(firstVariant.option1Name);
     if (firstVariant.option2Name) optionNames.push(firstVariant.option2Name);
@@ -376,6 +389,7 @@ export async function addProductVariant(product: Product): Promise<any> {
     const shopifyClient = getShopifyRestClient();
     const graphQLClient = getShopifyGraphQLClient();
 
+    // Find the parent product's ID using its handle
     const productResponse: any = await graphQLClient.query({
         data: {
             query: GET_PRODUCT_ID_BY_HANDLE_QUERY,
@@ -420,8 +434,14 @@ export async function addProductVariant(product: Product): Promise<any> {
         if (!createdVariant) {
             throw new Error('Variant creation did not return the expected variant data.');
         }
+        
+        // This is a new variant, so the full product context is not returned.
+        // We only get the variant itself. The calling function (`createInShopify`)
+        // will need to handle any further updates like inventory.
+        // Let's return the full product by fetching it again, so the caller has all info.
+        const fullProductResponse:any = await shopifyClient.get({ path: `products/${productId}` });
 
-        return createdVariant;
+        return fullProductResponse.body.product;
         
     } catch (error: any) {
          console.error("Error adding variant via REST:", error.response?.body || error);
@@ -450,11 +470,13 @@ export async function updateProduct(id: string, input: { title?: string, bodyHtm
 export async function updateProductVariant(variantId: number, input: { price?: number, image_id?: number }) {
     const shopifyClient = getShopifyRestClient();
     
+    // The payload needs to be wrapped in a "variant" object
     const payload = { variant: { id: variantId, ...input }};
     
     console.log(`Phase 2: Updating variant with REST payload:`, JSON.stringify(payload, null, 2));
 
     try {
+        // Correct endpoint for updating a variant is /admin/api/{version}/variants/{variant_id}.json
         const response: any = await shopifyClient.put({
             path: `variants/${variantId}`,
             data: payload,
@@ -475,6 +497,10 @@ export async function updateProductVariant(variantId: number, input: { price?: n
 export async function deleteProduct(productId: string): Promise<void> {
     const shopifyClient = getShopifyRestClient();
     const numericProductId = productId.split('/').pop();
+
+    if (!numericProductId) {
+        throw new Error(`Invalid Product ID GID: ${productId}`);
+    }
 
     console.log(`Attempting to delete product with ID: ${numericProductId}`);
     try {
@@ -505,6 +531,7 @@ export async function connectInventoryToLocation(inventoryItemId: string, locati
         console.log(`Successfully connected inventory item ${inventoryItemId} to location ${locationId}.`);
     } catch(error: any) {
         const errorBody = error.response?.body;
+        // Check if the error is that it's already stocked, which is not a failure condition for us.
         if (errorBody && errorBody.errors && JSON.stringify(errorBody.errors).includes('is already stocked at the location')) {
              console.log(`Inventory item ${inventoryItemId} was already connected to location ${locationId}.`);
              return;
@@ -593,8 +620,9 @@ export async function linkProductToCollection(productGid: string, collectionGid:
         });
         console.log(`Successfully linked product ${productGid} to collection ${collectionGid}.`);
     } catch(error: any) {
-        console.error(`Error linking product ${productGid} to collection ${collectionGid}:`, error.response?.body || error);
         // Don't throw, just warn, as this is a post-creation task.
+        // It might fail if the link already exists, which is not a critical error.
+        console.warn(`Could not link product ${productGid} to collection ${collectionGid}:`, error.response?.body || error);
     }
 }
 
@@ -613,22 +641,27 @@ export async function publishProductToSalesChannels(productGid: string): Promise
     const publicationInputs = publications.map((pub: { id: string }) => ({ publicationId: pub.id }));
 
     // 2. Publish the product to all publications
-    const result: any = await shopifyClient.query({
-        data: {
-            query: PUBLISHABLE_PUBLISH_MUTATION,
-            variables: {
-                id: productGid,
-                input: publicationInputs
+    try {
+        const result: any = await shopifyClient.query({
+            data: {
+                query: PUBLISHABLE_PUBLISH_MUTATION,
+                variables: {
+                    id: productGid,
+                    input: publicationInputs
+                }
             }
-        }
-    });
+        });
 
-    const userErrors = result.body.data?.publishablePublish?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        const errorMessages = userErrors.map((e: any) => e.message).join('; ');
-        console.warn(`Could not publish product ${productGid} to all sales channels: ${errorMessages}`);
-    } else {
-        console.log(`Successfully requested to publish product ${productGid} to ${publications.length} sales channels.`);
+        const userErrors = result.body.data?.publishablePublish?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+            const errorMessages = userErrors.map((e: any) => e.message).join('; ');
+            console.warn(`Could not publish product ${productGid} to all sales channels: ${errorMessages}`);
+        } else {
+            console.log(`Successfully requested to publish product ${productGid} to ${publications.length} sales channels.`);
+        }
+    } catch(error) {
+        console.error(`Error during publishProductToSalesChannels for product ${productGid}:`, error);
+        // Don't throw, just warn
     }
 }
     

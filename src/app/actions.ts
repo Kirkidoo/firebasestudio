@@ -268,7 +268,10 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   });
   console.log('Audit comparison complete. Matched:', matchedCount, 'Summary:', summary);
 
-  return { report, summary: {...summary, matched: matchedCount }, duplicates: duplicateSkus };
+  // Filter out matched items before returning
+  const finalReport = report.filter(item => item.status !== 'matched');
+
+  return { report: finalReport, summary: {...summary, matched: matchedCount }, duplicates: duplicateSkus };
 }
 
 
@@ -351,7 +354,7 @@ export async function createInShopify(
         // --- Phase 2: Post-creation/addition tasks ---
 
         // 2a. Link variant to image
-        if (missingType === 'product') { // Only run for full product creation
+        if (missingType === 'product' && createdProduct.images && createdProduct.images.length > 0) {
             console.log('Phase 2: Linking images to variants...');
             const imageUrlToIdMap = new Map(createdProduct.images.map((img: any) => [img.src, img.id]));
             
