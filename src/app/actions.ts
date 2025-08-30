@@ -338,7 +338,7 @@ export async function runBulkAudit(
         let operationStatus = operation;
         while(operationStatus.status === 'RUNNING' || operationStatus.status === 'CREATED') {
             console.log(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
-            await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5 seconds
             operationStatus = await checkBulkOperationStatus(operation.id);
             console.log(`Polling bulk operation status: ${operationStatus.status}`);
         }
@@ -562,6 +562,8 @@ export async function deleteVariantFromShopify(productId: string, variantId: str
 
 
 
+
+    
 
     
 
