@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearFixedMismatches } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -36,7 +36,7 @@ const statusConfig: { [key in Exclude<AuditStatus, 'matched'>]: { icon: React.El
 
 const getHandle = (item: AuditResult) => item.csvProduct?.handle || item.shopifyProduct?.handle || `no-handle-${item.sku}`;
 
-const MismatchDetails = ({ mismatches, onFix, disabled }: { mismatches: MismatchDetail[], onFix: (fixType: MismatchDetail['field']) => void, disabled: boolean }) => {
+const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled }: { mismatches: MismatchDetail[], onFix: (fixType: MismatchDetail['field']) => void, onMarkAsFixed: (fixType: MismatchDetail['field']) => void, disabled: boolean }) => {
     return (
         <div className="flex flex-col gap-2 mt-2">
             {mismatches.map((mismatch, index) => {
@@ -45,7 +45,7 @@ const MismatchDetails = ({ mismatches, onFix, disabled }: { mismatches: Mismatch
                      <div key={index} className="flex items-center gap-2 text-xs p-2 rounded-md bg-yellow-50 dark:bg-yellow-900/20">
                          <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
                         <div className="flex-grow">
-                            <span className="font-semibold capitalize">{mismatch.field.replace(/_/g, ' ')}: </span>
+                            <span className="font-semibold capitalize">{mismatch.field.replace(/_/g, ' ')}: </span> 
                             {mismatch.field === 'h1_tag' && (
                                  <span className="text-muted-foreground">Product description contains an H1 tag.</span>
                             )}
@@ -60,10 +60,24 @@ const MismatchDetails = ({ mismatches, onFix, disabled }: { mismatches: Mismatch
                             )}
                         </div>
                          {canBeFixed && (
-                             <Button size="sm" variant="ghost" className="h-7" onClick={() => onFix(mismatch.field)} disabled={disabled}>
-                                <Wrench className="mr-1.5 h-3.5 w-3.5" />
-                                Fix
-                            </Button>
+                             <div className="flex items-center gap-1">
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onMarkAsFixed(mismatch.field)} disabled={disabled}>
+                                                <Check className="h-4 w-4" />
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Mark as fixed</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                                <Button size="sm" variant="ghost" className="h-7" onClick={() => onFix(mismatch.field)} disabled={disabled}>
+                                    <Wrench className="mr-1.5 h-3.5 w-3.5" />
+                                    Fix
+                                </Button>
+                             </div>
                          )}
                     </div>
                 )
@@ -314,8 +328,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       });
   }
 
-  const handleFixSingleItem = (item: AuditResult) => {
-     handleBulkFix([item]);
+  const handleFixSingleMismatch = (item: AuditResult, fixType: MismatchDetail['field']) => {
+    const itemToFix: AuditResult = {
+        ...item,
+        mismatches: item.mismatches.filter(m => m.field === fixType)
+    };
+    handleBulkFix([itemToFix]);
   };
   
   const handleFixSelected = () => {
@@ -533,6 +551,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setFixedMismatches(new Set());
     toast({ title: "Cleared 'Remembered' Fixes", description: "The report is now showing all original mismatches. Run a new bulk audit for the latest data." });
   }
+  
+  const handleMarkAsFixed = (sku: string, field: MismatchDetail['field']) => {
+    markMismatchAsFixed(sku, field);
+    setFixedMismatches(prev => new Set(prev).add(`${sku}-${field}`));
+    toast({ title: 'Mismatch hidden', description: 'This mismatch will be hidden until you clear remembered fixes or run a new non-cached audit.' });
+  };
 
   const editingMissingMediaVariants = useMemo(() => {
     if (!editingMissingMedia) return [];
@@ -819,7 +843,14 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                     </TableCell>
                                                      <TableCell>
                                                         <div>
-                                                            {item.status === 'mismatched' && item.mismatches.length > 0 && <MismatchDetails mismatches={item.mismatches} onFix={(fixType) => handleBulkFix([item])} disabled={isFixing}/>}
+                                                            {item.status === 'mismatched' && item.mismatches.length > 0 && 
+                                                                <MismatchDetails 
+                                                                    mismatches={item.mismatches} 
+                                                                    onFix={(fixType) => handleFixSingleMismatch(item, fixType)} 
+                                                                    onMarkAsFixed={(fixType) => handleMarkAsFixed(item.sku, fixType)}
+                                                                    disabled={isFixing}
+                                                                />
+                                                            }
                                                             {item.status === 'missing_in_shopify' && item.csvProduct && (
                                                                 <p className="text-sm text-muted-foreground">
                                                                     This SKU is in your CSV but is a{' '}
@@ -953,6 +984,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
+
+    
 
     
 
