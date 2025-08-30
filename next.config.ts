@@ -27,6 +27,12 @@ const nextConfig: NextConfig = {
         hostname: 'cdn.shopify.com',
         port: '',
         pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'www.gammasales.com',
+        port: '',
+        pathname: '/**',
       }
     ],
   },
