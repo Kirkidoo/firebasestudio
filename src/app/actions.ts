@@ -5,7 +5,7 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, prepareBulkImport, startBulkImport } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
@@ -275,63 +275,6 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
 }
 
 
-// --- BULK IMPORT ACTION ---
-export async function runBulkImport(csvFileName: string, ftpData: FormData) {
-    console.log(`Starting BULK IMPORT for file: ${csvFileName}`);
-    try {
-        // 1. Get CSV file as a string buffer from FTP
-        const client = await getFtpClient(ftpData);
-        await client.cd(FTP_DIRECTORY);
-        const writable = new Writable();
-        const chunks: any[] = [];
-        writable._write = (chunk, encoding, next) => {
-            chunks.push(chunk);
-            next();
-        };
-        await client.downloadTo(writable, csvFileName);
-        const fileContent = Buffer.concat(chunks).toString('utf-8');
-        client.close();
-        console.log(`Successfully downloaded ${csvFileName} for bulk import.`);
-
-        // 2. Prepare the file for upload to Shopify
-        console.log('Preparing file for Shopify staged upload...');
-        const { uploadUrl, parameters, remoteKey } = await prepareBulkImport(csvFileName);
-
-        // 3. Upload the file to the Shopify-provided URL
-        console.log('Uploading file to Shopify...');
-        const formData = new FormData();
-        parameters.forEach(({ name, value }: { name: string, value: string }) => {
-            formData.append(name, value);
-        });
-        formData.append('file', new Blob([fileContent], { type: 'text/csv' }), csvFileName);
-        
-        const uploadResponse = await fetch(uploadUrl, {
-            method: 'POST',
-            body: formData,
-        });
-
-        if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text();
-            console.error('Shopify file upload failed:', errorText);
-            throw new Error(`Failed to upload file to Shopify. Status: ${uploadResponse.status}`);
-        }
-        console.log('File uploaded to Shopify successfully.');
-
-        // 4. Start the bulk mutation job
-        console.log('Starting bulk product create mutation...');
-        await startBulkImport(remoteKey);
-        console.log('Bulk import job started successfully.');
-
-        return { success: true, message: `Successfully started bulk product import for ${csvFileName}. Check your Shopify admin for progress.` };
-
-    } catch (error) {
-        console.error(`Failed to run bulk import for ${csvFileName}:`, error);
-        const message = error instanceof Error ? error.message : 'An unknown error occurred during bulk import.';
-        return { success: false, message };
-    }
-}
-
-
 // --- FIX ACTIONS ---
 
 export async function fixMismatch(
@@ -522,3 +465,4 @@ export async function deleteVariantFromShopify(productId: string, variantId: str
     
 
     
+
