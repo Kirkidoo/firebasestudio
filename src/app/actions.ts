@@ -354,7 +354,7 @@ export async function createInShopify(
         }
 
         // --- Post-creation tasks ---
-        const productGid = createdProduct.admin_graphql_api_id;
+        const productGid = `gid://shopify/Product/${createdProduct.id}`;
         
         // --- Phase 2: Link variant to image ---
         const createdImagesBySrc = new Map(createdProduct.images.map((img: any) => [img.src, img.id]));
@@ -366,7 +366,7 @@ export async function createInShopify(
              const imageId = createdImagesBySrc.get(sourceVariant.mediaUrl);
              if (imageId) {
                 console.log(`Phase 2: Assigning image ID ${imageId} to variant ID ${createdVariant.id}...`);
-                await updateProductVariant(createdVariant.id.toString(), { imageId: imageId });
+                await updateProductVariant(createdVariant.id.toString(), { image_id: imageId });
              } else {
                 console.warn(`Could not find a created image matching source URL: ${sourceVariant.mediaUrl} for SKU: ${sourceVariant.sku}`);
              }

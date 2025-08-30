@@ -336,7 +336,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
             vendor: firstVariant.vendor,
             product_type: firstVariant.productType,
             status: 'active',
-            tags,
+            tags: tags,
             variants: restVariants,
             images: restImages,
         }
@@ -446,17 +446,17 @@ export async function updateProduct(id: string, input: { title?: string, bodyHtm
     return response.body.data?.productUpdate?.product;
 }
 
-export async function updateProductVariant(id: string, input: { price?: number, imageId?: number }) {
+export async function updateProductVariant(variantId: string, input: { price?: number, image_id?: number }) {
     const shopifyClient = getShopifyRestClient();
     
-    const variantId = id.toString().split('/').pop();
-    const payload = { variant: { id: variantId, ...input }};
+    const numericVariantId = variantId.toString().split('/').pop();
+    const payload = { variant: { id: numericVariantId, ...input }};
     
     console.log(`Phase 2: Updating variant with REST payload:`, JSON.stringify(payload, null, 2));
 
     try {
         const response: any = await shopifyClient.put({
-            path: `variants/${variantId}`,
+            path: `variants/${numericVariantId}`,
             data: payload,
         });
 
