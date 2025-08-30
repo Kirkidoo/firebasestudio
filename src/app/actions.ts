@@ -16,6 +16,7 @@ const CACHE_DIR = path.join(process.cwd(), '.cache');
 const CACHE_FILE_PATH = path.join(CACHE_DIR, 'shopify-bulk-export.jsonl');
 const CACHE_INFO_PATH = path.join(CACHE_DIR, 'cache-info.json');
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function ensureCacheDirExists() {
     try {
@@ -714,3 +715,4 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
 
     
 
+    
