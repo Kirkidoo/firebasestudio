@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { downloadCsv } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot } from 'lucide-react';
+import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearFixedMismatches } from '@/lib/utils';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -23,6 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MediaManager } from '@/components/media-manager';
 import { PreCreationMediaManager } from '@/components/pre-creation-media-manager';
+import { Separator } from './ui/separator';
 
 
 type FilterType = 'all' | 'mismatched' | 'missing_in_shopify' | 'not_in_csv';
@@ -185,6 +186,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [selectedVendor, setSelectedVendor] = useState<string>('all');
   const [editingMissingMedia, setEditingMissingMedia] = useState<string | null>(null);
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
+  const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setReportData(data);
@@ -192,6 +194,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setShowRefresh(false);
     setCurrentPage(1);
     setSelectedHandles(new Set());
+    setFixedMismatches(getFixedMismatches());
   }, [data, summary]);
 
   const uniqueVendors = useMemo(() => {
@@ -206,7 +209,23 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
 
   const filteredData = useMemo(() => {
-    let results = reportData;
+    // Start with the raw report data
+    let results: AuditResult[] = reportData.map(item => {
+        // If the item has mismatches, filter out any that have been fixed
+        if (item.mismatches && item.mismatches.length > 0) {
+            const remainingMismatches = item.mismatches.filter(m => !fixedMismatches.has(`${item.sku}-${m.field}`));
+            // If all mismatches were fixed, we could potentially treat this item as 'matched'
+            // For now, we'll just remove the fixed mismatches from the list.
+            return { ...item, mismatches: remainingMismatches };
+        }
+        return item;
+    }).filter(item => {
+        // Remove items from the report if their only status was 'mismatched' and all mismatches are now fixed
+        if (item.status === 'mismatched' && item.mismatches.length === 0) {
+            return false;
+        }
+        return true;
+    });
 
     // 1. Filter by main tab
     if (filter !== 'all') {
@@ -237,9 +256,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         results = results.filter(item => item.shopifyProduct?.vendor === selectedVendor);
     }
 
-
     return results;
-  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor]);
+  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor, fixedMismatches]);
 
   const groupedByHandle = useMemo(() => {
       return filteredData.reduce((acc, item) => {
@@ -279,35 +297,20 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const handleBulkFix = (itemsToFix: AuditResult[]) => {
       setShowRefresh(true);
       
-      // Client-side optimistic update
-      const originalData = [...reportData];
-      const skusToFix = new Set(itemsToFix.map(i => i.sku));
-      
-      const newData = reportData.map(item => {
-          if (skusToFix.has(item.sku)) {
-              return { ...item, mismatches: [] }; // Optimistically remove mismatches
-          }
-          return item;
-      }).filter(item => item.status !== 'mismatched' || item.mismatches.length > 0);
-
-      setReportData(newData);
-      setReportSummary(prev => ({
-          ...prev,
-          mismatched: prev.mismatched - itemsToFix.length,
-          matched: (prev.matched ?? 0) + itemsToFix.length
-      }));
-      setSelectedHandles(new Set());
-
-
       startTransition(async () => {
           const result = await fixMultipleMismatches(itemsToFix);
-           if (result.success) {
+           if (result.success && result.results.length > 0) {
               toast({ title: 'Bulk Fix Complete!', description: result.message });
-              // Potentially refresh data here if needed, but optimistic update is often enough
+              const newFixed = new Set(fixedMismatches);
+              result.results.forEach(fixedItem => {
+                markMismatchAsFixed(fixedItem.sku, fixedItem.field);
+                newFixed.add(`${fixedItem.sku}-${fixedItem.field}`);
+              });
+              setFixedMismatches(newFixed);
           } else {
-              toast({ title: 'Bulk Fix Failed', description: result.message, variant: 'destructive' });
-              setReportData(originalData); // Revert on failure
+              toast({ title: 'Bulk Fix Failed', description: result.message || "No items were fixed.", variant: 'destructive' });
           }
+          setSelectedHandles(new Set());
       });
   }
 
@@ -370,7 +373,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
 
     startTransition(async () => {
-        const result = await createInShopify(productToCreate, allVariantsForHandle, missingType, fileName);
+        const result = await createInShopify(productToCreate, allVariantsForHandle, fileName);
         if (result.success) {
             toast({ title: 'Success!', description: result.message });
         } else {
@@ -524,6 +527,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         return newSet;
     })
   }
+  
+  const handleClearFixedMismatches = () => {
+    clearFixedMismatches();
+    setFixedMismatches(new Set());
+    toast({ title: "Cleared 'Remembered' Fixes", description: "The report is now showing all original mismatches. Run a new bulk audit for the latest data." });
+  }
 
   const editingMissingMediaVariants = useMemo(() => {
     if (!editingMissingMedia) return [];
@@ -532,6 +541,15 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       .map(d => d.csvProduct)
       .filter((p): p is Product => p !== null);
   }, [editingMissingMedia, reportData]);
+  
+  const currentSummary = useMemo(() => {
+      return filteredData.reduce((acc, item) => {
+          if(item.status === 'mismatched' && item.mismatches.length > 0) acc.mismatched++;
+          if(item.status === 'missing_in_shopify') acc.missing_in_shopify++;
+          if(item.status === 'not_in_csv') acc.not_in_csv++;
+          return acc;
+      }, { mismatched: 0, missing_in_shopify: 0, not_in_csv: 0 });
+  }, [filteredData]);
 
   return (
     <>
@@ -569,21 +587,21 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <AlertTriangle className="w-6 h-6 text-yellow-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{reportSummary.mismatched}</div>
+                    <div className="text-xl font-bold">{currentSummary.mismatched}</div>
                     <div className="text-xs text-muted-foreground">SKUs Mismatched</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <XCircle className="w-6 h-6 text-red-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{reportSummary.missing_in_shopify}</div>
+                    <div className="text-xl font-bold">{currentSummary.missing_in_shopify}</div>
                     <div className="text-xs text-muted-foreground">SKUs Missing in Shopify</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <PlusCircle className="w-6 h-6 text-blue-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{reportSummary.not_in_csv}</div>
+                    <div className="text-xl font-bold">{currentSummary.not_in_csv}</div>
                     <div className="text-xs text-muted-foreground">SKUs Not in CSV</div>
                 </div>
             </div>
@@ -594,8 +612,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           <div className="flex flex-wrap gap-2">
             {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => {
                 const count = f === 'all' 
-                    ? data.length
-                    : reportSummary[f];
+                    ? filteredData.length
+                    : currentSummary[f];
                 const config = statusConfig[f as keyof typeof statusConfig];
                 if (count === 0 && f !== 'all') return null;
 
@@ -635,9 +653,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                             Filter Mismatches ({mismatchFilters.size > 0 ? `${mismatchFilters.size} selected` : 'All'})
                         </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-56 p-4">
-                        <div className="space-y-4">
-                            <h4 className="font-medium leading-none">Mismatch Types</h4>
+                    <PopoverContent className="w-60 p-0">
+                        <div className="p-4">
+                            <h4 className="font-medium leading-none mb-4">Mismatch Types</h4>
                             <div className="space-y-2">
                                 {MISMATCH_FILTER_TYPES.map(type => (
                                     <div key={type} className="flex items-center space-x-2">
@@ -650,6 +668,13 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                     </div>
                                 ))}
                             </div>
+                        </div>
+                        <Separator />
+                        <div className="p-2">
+                           <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleClearFixedMismatches}>
+                             <Eraser className="mr-2 h-4 w-4"/>
+                             Clear remembered fixes
+                           </Button>
                         </div>
                     </PopoverContent>
                 </Popover>
@@ -696,10 +721,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                              });
                          }
 
-                         const overallStatus: AuditStatus | 'matched' = hasMismatch ? 'mismatched' 
+                         const overallStatus: AuditStatus | 'matched' = items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) ? 'mismatched' 
                              : isMissing ? 'missing_in_shopify'
                              : notInCsv ? 'not_in_csv'
-                             : items.some(i => i.status === 'mismatched') ? 'mismatched' // For duplicate_sku only
                              : 'matched';
                          
                          if (overallStatus === 'matched') {
@@ -736,8 +760,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                 </AccordionTrigger>
 
                                 <div className="flex items-center justify-end gap-2 px-4">
-                                     {hasMismatch && (
-                                        <Button size="sm" onClick={() => handleBulkFix(items)} disabled={isFixing}>
+                                     {items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) && (
+                                        <Button size="sm" onClick={() => handleBulkFix(items.filter(i => i.status === 'mismatched'))} disabled={isFixing}>
                                             <Bot className="mr-2 h-4 w-4" />
                                             Fix All ({items.flatMap(i => i.mismatches).filter(m => m.field !== 'duplicate_sku').length})
                                         </Button>
@@ -778,6 +802,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                             const itemConfig = statusConfig[item.status as Exclude<AuditStatus, 'matched'>];
                                             const productForDetails = item.csvProduct || item.shopifyProduct;
                                             
+                                            if (item.status === 'mismatched' && item.mismatches.length === 0) return null;
+
                                             return (
                                                 <TableRow key={item.sku} className={
                                                     item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
@@ -793,7 +819,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                     </TableCell>
                                                      <TableCell>
                                                         <div>
-                                                            {item.status === 'mismatched' && <MismatchDetails mismatches={item.mismatches} onFix={(fixType) => handleBulkFix([item])} disabled={isFixing}/>}
+                                                            {item.status === 'mismatched' && item.mismatches.length > 0 && <MismatchDetails mismatches={item.mismatches} onFix={(fixType) => handleBulkFix([item])} disabled={isFixing}/>}
                                                             {item.status === 'missing_in_shopify' && item.csvProduct && (
                                                                 <p className="text-sm text-muted-foreground">
                                                                     This SKU is in your CSV but is a{' '}
@@ -927,5 +953,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
+
+    
 
     

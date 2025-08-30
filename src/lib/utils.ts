@@ -1,3 +1,4 @@
+
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 
@@ -31,3 +32,36 @@ export function downloadCsv(data: any[], filename: string) {
     document.body.removeChild(link);
   }
 }
+
+// --- Local Storage for Fixed Mismatches ---
+const FIXED_MISMATCHES_KEY = 'fixedMismatches';
+
+export function getFixedMismatches(): Set<string> {
+    if (typeof window === 'undefined') {
+        return new Set();
+    }
+    const saved = localStorage.getItem(FIXED_MISMATCHES_KEY);
+    if (!saved) {
+        return new Set();
+    }
+    try {
+        const parsed = JSON.parse(saved);
+        return new Set(Array.isArray(parsed) ? parsed : []);
+    } catch (e) {
+        return new Set();
+    }
+}
+
+export function markMismatchAsFixed(sku: string, field: string) {
+    if (typeof window === 'undefined') return;
+    const currentFixed = getFixedMismatches();
+    currentFixed.add(`${sku}-${field}`);
+    localStorage.setItem(FIXED_MISMATCHES_KEY, JSON.stringify(Array.from(currentFixed)));
+}
+
+export function clearFixedMismatches() {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(FIXED_MISMATCHES_KEY);
+}
+
+    

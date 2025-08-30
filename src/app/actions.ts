@@ -470,9 +470,10 @@ export async function fixMultipleMismatches(items: AuditResult[]): Promise<{ suc
         revalidatePath('/');
     }
 
+    const successfulFixes = itemResults.filter(r => r.success);
     const message = `Attempted to fix ${itemResults.length} issues. Successfully fixed ${fixCount}.`;
     console.log(message);
-    return { success: true, message, results: itemResults };
+    return { success: true, message, results: successfulFixes };
 }
 
 
@@ -480,10 +481,10 @@ export async function fixMultipleMismatches(items: AuditResult[]): Promise<{ suc
 export async function createInShopify(
     product: Product,
     allVariantsForHandle: Product[],
-    missingType: 'product' | 'variant',
     fileName: string
 ) {
-    console.log(`Attempting to create '${missingType}' for Handle: ${product.handle}`);
+    console.log(`Attempting to create product/variant for Handle: ${product.handle}`);
+    const missingType = allVariantsForHandle.length > 1 ? 'product' : 'variant';
     try {
         let createdProduct;
         const addClearanceTag = fileName.toLowerCase().includes('clearance');
@@ -708,6 +709,8 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
 
 
 
+
+    
 
     
 
