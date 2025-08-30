@@ -675,17 +675,19 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                             </div>
                                         )}
                                         <Badge variant="outline">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
-                                        { (items[0].shopifyProduct?.id) &&
-                                        <Dialog>
-                                            <DialogTrigger asChild>
-                                                <Button size="sm" variant="outline">
-                                                    <ImageIcon className="mr-2 h-4 w-4" />
-                                                    Manage Media
-                                                </Button>
-                                            </DialogTrigger>
-                                            <MediaManager productId={items[0].shopifyProduct!.id} />
-                                        </Dialog>
-                                        }
+                                        <div onClick={(e) => e.stopPropagation()}>
+                                            {items[0].shopifyProduct?.id && (
+                                                <Dialog>
+                                                    <DialogTrigger asChild>
+                                                        <Button size="sm" variant="outline">
+                                                            <ImageIcon className="mr-2 h-4 w-4" />
+                                                            Manage Media
+                                                        </Button>
+                                                    </DialogTrigger>
+                                                    <MediaManager productId={items[0].shopifyProduct!.id} />
+                                                </Dialog>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             </AccordionTrigger>
