@@ -346,5 +346,3 @@ export default function AuditStepper() {
 
   return null;
 }
-
-    
