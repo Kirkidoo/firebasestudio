@@ -435,10 +435,6 @@ export async function addProductVariant(product: Product): Promise<any> {
             throw new Error('Variant creation did not return the expected variant data.');
         }
         
-        // This is a new variant, so the full product context is not returned.
-        // We only get the variant itself. The calling function (`createInShopify`)
-        // will need to handle any further updates like inventory.
-        // Let's return the full product by fetching it again, so the caller has all info.
         const fullProductResponse:any = await shopifyClient.get({ path: `products/${productId}` });
 
         return fullProductResponse.body.product;
@@ -472,10 +468,9 @@ export async function updateProductVariant(variantId: number, input: { image_id?
     
     const payload = { variant: { id: variantId, ...input }};
     
-    console.log(`Phase 2: Updating variant with REST payload:`, JSON.stringify(payload, null, 2));
+    console.log(`Phase 2: Updating variant ${variantId} with REST payload:`, JSON.stringify(payload, null, 2));
 
     try {
-        // Use the generic /variants/{id}.json endpoint
         const response: any = await shopifyClient.put({
             path: `variants/${variantId}`,
             data: payload,

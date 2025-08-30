@@ -342,7 +342,6 @@ export async function createInShopify(
         } else { // 'variant'
              console.log(`Adding variant with SKU ${product.sku} to existing product.`);
              createdProduct = await addProductVariant(product);
-             // The addProductVariant function now returns the full product, so we can treat it similarly
         }
         
         if (!createdProduct || !createdProduct.id) {
