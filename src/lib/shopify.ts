@@ -135,7 +135,7 @@ const BULK_OPERATION_RUN_QUERY_MUTATION = `
   }
 `;
 
-const GET_BULK_OPERATION_STATUS_QUERY = `
+const GET_CURRENT_BULK_OPERATION_QUERY = `
   query {
     currentBulkOperation {
       id
@@ -751,52 +751,66 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
 
 export async function checkBulkOperationStatus(id: string): Promise<{ id: string, status: string, resultUrl?: string }> {
     const shopifyClient = getShopifyGraphQLClient();
-    // We pass the ID to the query, but the query itself is for the *current* operation.
-    // This is a Shopify API design choice.
-    const response: any = await shopifyClient.query({
-        data: { query: GET_BULK_OPERATION_STATUS_QUERY },
+    
+    // First, try to get the current operation. This is faster if only one operation is running.
+    const currentOpResponse: any = await shopifyClient.query({
+        data: { query: GET_CURRENT_BULK_OPERATION_QUERY },
     });
 
-    const operation = response.body.data?.currentBulkOperation;
-    if (!operation) {
-        throw new Error("Could not retrieve bulk operation status.");
+    const operation = currentOpResponse.body.data?.currentBulkOperation;
+    
+    // If the current operation is the one we're looking for, great!
+    if (operation && operation.id === id) {
+        return { id: operation.id, status: operation.status, resultUrl: operation.url };
     }
-
-    // Ensure we're checking the status of the operation we started
-    if (operation.id !== id) {
-        console.warn(`Polling for operation ${id}, but current operation is ${operation.id}. Assuming previous job is still running.`);
-        return { id: id, status: 'RUNNING' };
+    
+    // If there's another operation running, or no operation, we assume ours is still in the queue or just finished.
+    // Shopify's `currentBulkOperation` can sometimes lag. We'll return a status that keeps polling.
+    // This is a simplified handling. A more robust solution might involve querying nodes by ID if the API supported it well.
+    if (operation && operation.id !== id && (operation.status === 'RUNNING' || operation.status === 'CREATED')) {
+         console.warn(`Polling for operation ${id}, but a different operation ${operation.id} is currently running. Will keep polling.`);
+         return { id: id, status: 'RUNNING' };
     }
-
-    return { id: operation.id, status: operation.status, resultUrl: operation.url };
+    
+    // If no current operation, ours might be completed but not showing up yet.
+    // Or it failed. The `RUNNING` status will force another poll.
+    console.log(`currentBulkOperation did not return the expected operation ${id}. Current is:`, operation);
+    return { id: id, status: 'RUNNING' };
 }
 
-export async function getBulkOperationResult(url: string): Promise<Product[]> {
+export async function getBulkOperationResult(url: string): Promise<string> {
     const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`Failed to download bulk operation result from ${url}`);
     }
+    return response.text();
+}
 
-    const text = await response.text();
-    const lines = text.split('\n').filter(line => line.trim() !== '');
+export async function parseBulkOperationResult(jsonlContent: string): Promise<Product[]> {
+    const lines = jsonlContent.split('\n').filter(line => line.trim() !== '');
     const products: Product[] = [];
+    const parentProducts = new Map<string, any>();
 
+    // First pass: map all parent products by their ID
+    for (const line of lines) {
+        const item = JSON.parse(line);
+        if (item.id.includes('gid://shopify/Product/')) {
+            parentProducts.set(item.id, item);
+        }
+    }
+
+    // Second pass: create product entries for each variant, linking to its parent
     for (const line of lines) {
         const shopifyProduct = JSON.parse(line);
         
-        // The result is nested. The product is the child of the `__parentId` variant.
-        // We need to find the parent product for each variant.
         if (shopifyProduct.id.includes('gid://shopify/ProductVariant')) {
             const variantId = shopifyProduct.id;
             const sku = shopifyProduct.sku;
             const parentId = shopifyProduct.__parentId;
             
-            // This is inefficient but necessary with the JSONL structure.
-            // A better approach for huge datasets might be to build a map first.
-            const parentProductLine = lines.find(l => l.includes(`"id":"${parentId}"`));
+            const parentProduct = parentProducts.get(parentId);
             
-            if (parentProductLine && sku) {
-                const parentProduct = JSON.parse(parentProductLine);
+            if (parentProduct && sku) {
                 products.push({
                     id: parentProduct.id,
                     variantId: variantId,
@@ -814,7 +828,7 @@ export async function getBulkOperationResult(url: string): Promise<Product[]> {
                     costPerItem: null,
                     barcode: null,
                     weight: null,
-                    mediaUrl: null,
+                    mediaUrl: null, // Note: Bulk export doesn't easily link variant images
                     category: null,
                     option1Name: null,
                     option1Value: null,
@@ -826,6 +840,9 @@ export async function getBulkOperationResult(url: string): Promise<Product[]> {
             }
         }
     }
+    console.log(`Parsed ${products.length} products from bulk operation result.`);
     return products;
 }
+    
+
     

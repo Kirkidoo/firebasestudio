@@ -5,12 +5,25 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail } from '@/lib/types'
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation, checkBulkOperationStatus, getBulkOperationResult } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation, checkBulkOperationStatus, getBulkOperationResult, parseBulkOperationResult } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
+import fs from 'fs/promises';
+import path from 'path';
 
 const FTP_DIRECTORY = '/Gamma_Product_Files/Shopify_Files/';
 const GAMMA_WAREHOUSE_LOCATION_ID = 93998154045;
+const CACHE_DIR = path.join(process.cwd(), '.cache');
+const CACHE_FILE_PATH = path.join(CACHE_DIR, 'shopify-bulk-export.jsonl');
+const CACHE_INFO_PATH = path.join(CACHE_DIR, 'cache-info.json');
 
+
+async function ensureCacheDirExists() {
+    try {
+        await fs.access(CACHE_DIR);
+    } catch {
+        await fs.mkdir(CACHE_DIR, { recursive: true });
+    }
+}
 
 async function getFtpClient(data: FormData) {
   const host = data.get('host') as string;
@@ -274,9 +287,20 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   return { report, summary, duplicates: duplicateSkus };
 }
 
+export async function checkBulkCacheStatus(): Promise<{ lastModified: string | null }> {
+    try {
+        await fs.access(CACHE_INFO_PATH);
+        const info = JSON.parse(await fs.readFile(CACHE_INFO_PATH, 'utf-8'));
+        return { lastModified: info.lastModified };
+    } catch (error) {
+        return { lastModified: null };
+    }
+}
+
 export async function runBulkAudit(
     csvFileName: string, 
     ftpData: FormData,
+    useCache: boolean,
     onProgress: (message: string) => void
 ): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
     onProgress('Downloading and parsing CSV file from FTP...');
@@ -296,29 +320,49 @@ export async function runBulkAudit(
     if (csvProducts.length === 0) {
         throw new Error('No products with valid Handle, SKU, Title, and Price found in the CSV file.');
     }
-
-    onProgress('Requesting product export from Shopify. This may take several minutes...');
-    const operation = await startProductExportBulkOperation();
-    console.log(`Bulk operation started: ${operation.id}`);
-
-    let operationStatus = operation;
-    while(operationStatus.status === 'RUNNING' || operationStatus.status === 'CREATED') {
-        onProgress(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
-        await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
-        operationStatus = await checkBulkOperationStatus(operation.id);
-        console.log(`Polling bulk operation status: ${operationStatus.status}`);
-    }
-
-    if (operationStatus.status !== 'COMPLETED') {
-        throw new Error(`Shopify bulk operation failed or was cancelled. Status: ${operationStatus.status}`);
-    }
     
-    if(!operationStatus.resultUrl) {
-         throw new Error(`Shopify bulk operation completed, but did not provide a result URL.`);
-    }
+    let shopifyProducts: Product[];
 
-    onProgress('Downloading and processing exported data from Shopify...');
-    const shopifyProducts = await getBulkOperationResult(operationStatus.resultUrl);
+    if (useCache) {
+        onProgress('Using cached Shopify data...');
+        try {
+            const fileContent = await fs.readFile(CACHE_FILE_PATH, 'utf-8');
+            shopifyProducts = await parseBulkOperationResult(fileContent);
+        } catch (error) {
+            console.error("Failed to read or parse cache file.", error);
+            throw new Error("Could not read the cache file. Please start a new bulk operation.");
+        }
+    } else {
+        onProgress('Requesting product export from Shopify. This may take several minutes...');
+        const operation = await startProductExportBulkOperation();
+        console.log(`Bulk operation started: ${operation.id}`);
+
+        let operationStatus = operation;
+        while(operationStatus.status === 'RUNNING' || operationStatus.status === 'CREATED') {
+            onProgress(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
+            await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
+            operationStatus = await checkBulkOperationStatus(operation.id);
+            console.log(`Polling bulk operation status: ${operationStatus.status}`);
+        }
+
+        if (operationStatus.status !== 'COMPLETED') {
+            throw new Error(`Shopify bulk operation failed or was cancelled. Status: ${operationStatus.status}`);
+        }
+        
+        if(!operationStatus.resultUrl) {
+            throw new Error(`Shopify bulk operation completed, but did not provide a result URL.`);
+        }
+
+        onProgress('Downloading and processing exported data from Shopify...');
+        const resultJsonl = await getBulkOperationResult(operationStatus.resultUrl);
+        
+        onProgress('Caching Shopify data...');
+        await ensureCacheDirExists();
+        await fs.writeFile(CACHE_FILE_PATH, resultJsonl);
+        await fs.writeFile(CACHE_INFO_PATH, JSON.stringify({ lastModified: new Date().toISOString() }));
+        
+        shopifyProducts = await parseBulkOperationResult(resultJsonl);
+    }
     
     onProgress('Generating audit report...');
     const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts);
@@ -519,3 +563,6 @@ export async function deleteVariantFromShopify(productId: string, variantId: str
     
 
 
+
+
+    
