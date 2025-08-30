@@ -92,11 +92,6 @@ export default function AuditStepper() {
     setStep('auditing');
     
     const isBulk = selectedCsv === BULK_AUDIT_FILE;
-    const initialMessage = isBulk 
-        ? 'Starting bulk audit...'
-        : 'Starting audit... This may take a moment.';
-    
-    setProgressMessage(initialMessage);
     
     startTransition(async () => {
       try {
@@ -108,12 +103,8 @@ export default function AuditStepper() {
         
         let result;
         if (isBulk) {
-            result = await runBulkAudit(selectedCsv, ftpData, useCache, (message) => {
-                // This is a callback to update progress message from the server
-                startTransition(() => {
-                    setProgressMessage(message);
-                });
-            });
+            setProgressMessage(useCache ? 'Generating report from cache...' : 'Starting bulk operation... This can take several minutes.');
+            result = await runBulkAudit(selectedCsv, ftpData, useCache);
         } else {
             setProgressMessage('Processing file... This may take a moment for large files.');
             result = await runAudit(selectedCsv, ftpData);

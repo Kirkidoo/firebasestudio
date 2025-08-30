@@ -300,10 +300,8 @@ export async function checkBulkCacheStatus(): Promise<{ lastModified: string | n
 export async function runBulkAudit(
     csvFileName: string, 
     ftpData: FormData,
-    useCache: boolean,
-    onProgress: (message: string) => void
+    useCache: boolean
 ): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
-    onProgress('Downloading and parsing CSV file from FTP...');
     let csvProducts: Product[] = [];
     let duplicateSkus: DuplicateSku[] = [];
 
@@ -324,7 +322,7 @@ export async function runBulkAudit(
     let shopifyProducts: Product[];
 
     if (useCache) {
-        onProgress('Using cached Shopify data...');
+        console.log('Using cached Shopify data...');
         try {
             const fileContent = await fs.readFile(CACHE_FILE_PATH, 'utf-8');
             shopifyProducts = await parseBulkOperationResult(fileContent);
@@ -333,13 +331,13 @@ export async function runBulkAudit(
             throw new Error("Could not read the cache file. Please start a new bulk operation.");
         }
     } else {
-        onProgress('Requesting product export from Shopify. This may take several minutes...');
+        console.log('Requesting product export from Shopify. This may take several minutes...');
         const operation = await startProductExportBulkOperation();
         console.log(`Bulk operation started: ${operation.id}`);
 
         let operationStatus = operation;
         while(operationStatus.status === 'RUNNING' || operationStatus.status === 'CREATED') {
-            onProgress(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
+            console.log(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
             await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
             operationStatus = await checkBulkOperationStatus(operation.id);
             console.log(`Polling bulk operation status: ${operationStatus.status}`);
@@ -353,10 +351,10 @@ export async function runBulkAudit(
             throw new Error(`Shopify bulk operation completed, but did not provide a result URL.`);
         }
 
-        onProgress('Downloading and processing exported data from Shopify...');
+        console.log('Downloading and processing exported data from Shopify...');
         const resultJsonl = await getBulkOperationResult(operationStatus.resultUrl);
         
-        onProgress('Caching Shopify data...');
+        console.log('Caching Shopify data...');
         await ensureCacheDirExists();
         await fs.writeFile(CACHE_FILE_PATH, resultJsonl);
         await fs.writeFile(CACHE_INFO_PATH, JSON.stringify({ lastModified: new Date().toISOString() }));
@@ -364,7 +362,7 @@ export async function runBulkAudit(
         shopifyProducts = await parseBulkOperationResult(resultJsonl);
     }
     
-    onProgress('Generating audit report...');
+    console.log('Generating audit report...');
     const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts);
 
     return { report, summary, duplicates: duplicateSkus };
@@ -564,5 +562,7 @@ export async function deleteVariantFromShopify(productId: string, variantId: str
 
 
 
+
+    
 
     
