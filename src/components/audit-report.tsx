@@ -655,42 +655,42 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
                         return (
                         <AccordionItem value={handle} key={handle}>
-                            <AccordionTrigger className="px-4 py-2 hover:no-underline group" disabled={isFixing}>
-                                <div className="flex items-center gap-4 w-full">
-                                    <config.icon className={`w-5 h-5 shrink-0 ${
-                                            overallStatus === 'mismatched' ? 'text-yellow-500' 
-                                            : overallStatus === 'missing_in_shopify' ? 'text-red-500'
-                                            : 'text-blue-500'
-                                    }`} />
-                                    <div className="flex-grow text-left">
-                                        <p className="font-semibold">{productTitle}</p>
-                                        <p className="text-sm text-muted-foreground">{handle}</p>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        {hasMismatch && (
-                                            <div className="flex items-center gap-1.5 text-yellow-600">
-                                                {Array.from(uniqueMismatchTypes).map(field => (
-                                                    <MismatchIcon key={field} field={field} />
-                                                ))}
-                                            </div>
-                                        )}
-                                        <Badge variant="outline">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
-                                        <div onClick={(e) => e.stopPropagation()}>
-                                            {items[0].shopifyProduct?.id && (
-                                                <Dialog>
-                                                    <DialogTrigger asChild>
-                                                        <Button size="sm" variant="outline">
-                                                            <ImageIcon className="mr-2 h-4 w-4" />
-                                                            Manage Media
-                                                        </Button>
-                                                    </DialogTrigger>
-                                                    <MediaManager productId={items[0].shopifyProduct!.id} />
-                                                </Dialog>
+                            <div className="flex items-center px-4 py-2 group">
+                                <AccordionTrigger className="flex-grow" disabled={isFixing}>
+                                    <div className="flex items-center gap-4 w-full">
+                                        <config.icon className={`w-5 h-5 shrink-0 ${
+                                                overallStatus === 'mismatched' ? 'text-yellow-500' 
+                                                : overallStatus === 'missing_in_shopify' ? 'text-red-500'
+                                                : 'text-blue-500'
+                                        }`} />
+                                        <div className="flex-grow text-left">
+                                            <p className="font-semibold">{productTitle}</p>
+                                            <p className="text-sm text-muted-foreground">{handle}</p>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            {hasMismatch && (
+                                                <div className="flex items-center gap-1.5 text-yellow-600">
+                                                    {Array.from(uniqueMismatchTypes).map(field => (
+                                                        <MismatchIcon key={field} field={field} />
+                                                    ))}
+                                                </div>
                                             )}
+                                            <Badge variant="outline">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
                                         </div>
                                     </div>
-                                </div>
-                            </AccordionTrigger>
+                                </AccordionTrigger>
+                                {items[0].shopifyProduct?.id && (
+                                    <Dialog>
+                                        <DialogTrigger asChild>
+                                            <Button size="sm" variant="outline">
+                                                <ImageIcon className="mr-2 h-4 w-4" />
+                                                Manage Media
+                                            </Button>
+                                        </DialogTrigger>
+                                        <MediaManager productId={items[0].shopifyProduct!.id} />
+                                    </Dialog>
+                                )}
+                            </div>
                             <AccordionContent>
                                 <Table>
                                     <TableHeader>
@@ -846,3 +846,5 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </Card>
   );
 }
+
+    
