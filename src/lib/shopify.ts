@@ -484,21 +484,59 @@ export async function addProductVariant(product: Product): Promise<any> {
 
 
 export async function updateProduct(id: string, input: { title?: string, bodyHtml?: string }) {
-    const shopifyClient = getShopifyGraphQLClient();
-    const response: any = await shopifyClient.query({
-        data: {
-            query: UPDATE_PRODUCT_MUTATION,
-            variables: { input: { id, ...input } },
-        },
-    });
-
-    const userErrors = response.body.data?.productUpdate?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-        console.error("Error updating product:", userErrors);
-        throw new Error(`Failed to update product: ${userErrors[0].message}`);
+    // If we are only updating the title, we can use the more efficient GraphQL mutation
+    if (input.title && !input.bodyHtml) {
+        const shopifyClient = getShopifyGraphQLClient();
+        const response: any = await shopifyClient.query({
+            data: {
+                query: UPDATE_PRODUCT_MUTATION,
+                variables: { input: { id, title: input.title } },
+            },
+        });
+        const userErrors = response.body.data?.productUpdate?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+            console.error("Error updating product title via GraphQL:", userErrors);
+            throw new Error(`Failed to update product: ${userErrors[0].message}`);
+        }
+        return response.body.data?.productUpdate?.product;
     }
-    return response.body.data?.productUpdate?.product;
+    
+    // For other updates, like bodyHtml, use the REST API
+    const shopifyClient = getShopifyRestClient();
+    const numericProductId = id.split('/').pop();
+
+    if (!numericProductId) {
+        throw new Error(`Invalid Product ID GID for REST update: ${id}`);
+    }
+
+    const payload = {
+        product: {
+            id: numericProductId,
+            body_html: input.bodyHtml,
+        }
+    };
+    
+    if (input.title) {
+        payload.product.title = input.title;
+    }
+
+    try {
+        const response: any = await shopifyClient.put({
+            path: `products/${numericProductId}`,
+            data: payload,
+        });
+         if (response.body.errors) {
+            console.error("Error updating product via REST:", response.body.errors);
+            throw new Error(`Failed to update product: ${JSON.stringify(response.body.errors)}`);
+        }
+        return response.body.product;
+
+    } catch(error: any) {
+        console.error("Error during product update via REST:", error.response?.body || error);
+        throw new Error(`Failed to update product. Status: ${error.response?.statusCode} Body: ${JSON.stringify(error.response?.body)}`);
+    }
 }
+
 
 export async function updateProductVariant(variantId: number, input: { image_id?: number, price?: number }) {
     const shopifyClient = getShopifyRestClient();
