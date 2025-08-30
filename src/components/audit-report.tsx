@@ -504,6 +504,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
                          const config = statusConfig[overallStatus];
 
+                         const allVariantsForHandleInShopify = data.filter(d => d.shopifyProduct?.handle === handle);
+                         const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
+
                         return (
                         <AccordionItem value={handle} key={handle}>
                             <AccordionTrigger className="px-4 hover:no-underline" disabled={isFixing}>
@@ -541,9 +544,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                         {items.map((item, index) => {
                                             const itemConfig = statusConfig[item.status];
                                             const productForDetails = item.csvProduct || item.shopifyProduct;
-                                            const allVariantsForHandleInShopify = data.filter(d => d.shopifyProduct?.handle === handle);
-                                            const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
-
+                                            
                                             return (
                                                 <TableRow key={item.sku} className={
                                                     item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
