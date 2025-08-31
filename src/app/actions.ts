@@ -666,6 +666,7 @@ export async function getProductWithImages(productId: string): Promise<{ variant
 
 export async function addImageFromUrl(productId: string, imageUrl: string): Promise<{ success: boolean; message: string; image?: ShopifyProductImage }> {
     try {
+        await sleep(500); // Add delay to prevent rate limiting
         const numericProductId = parseInt(productId.split('/').pop() || '0', 10);
         if (!numericProductId) {
             throw new Error(`Invalid Product GID: ${productId}`);
@@ -681,6 +682,7 @@ export async function addImageFromUrl(productId: string, imageUrl: string): Prom
 
 export async function assignImageToVariant(variantId: string, imageId: number): Promise<{ success: boolean; message: string }> {
      try {
+        await sleep(500); // Add delay to prevent rate limiting
         const numericVariantId = parseInt(variantId.split('/').pop() || '0', 10);
         if (!numericVariantId) {
             throw new Error(`Invalid Variant GID: ${variantId}`);
@@ -696,6 +698,7 @@ export async function assignImageToVariant(variantId: string, imageId: number): 
 
 export async function deleteImage(productId: string, imageId: number): Promise<{ success: boolean; message: string }> {
     try {
+        await sleep(500); // Add delay to prevent rate limiting
         const numericProductId = parseInt(productId.split('/').pop() || '0', 10);
         if (!numericProductId) {
             throw new Error(`Invalid Product GID: ${productId}`);
@@ -724,3 +727,4 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
     
+
