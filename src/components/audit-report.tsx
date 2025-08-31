@@ -558,6 +558,16 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     })
   }
   
+  const handleSelectAllOnPage = (checked: boolean) => {
+    const newSelectedHandles = new Set(selectedHandles);
+    if (checked) {
+      paginatedHandleKeys.forEach(handle => newSelectedHandles.add(handle));
+    } else {
+      paginatedHandleKeys.forEach(handle => newSelectedHandles.delete(handle));
+    }
+    setSelectedHandles(newSelectedHandles);
+  };
+  
   const handleClearFixedMismatches = () => {
     clearFixedMismatches();
     setFixedMismatches(new Set());
@@ -617,6 +627,20 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const onImageCountChange = useCallback((handle: string, count: number) => {
       setImageCounts(prev => ({...prev, [handle]: count}));
   }, []);
+
+  const { isAllOnPageSelected, isSomeOnPageSelected } = useMemo(() => {
+    const currentPageHandles = new Set(paginatedHandleKeys);
+    const selectedOnPageCount = Array.from(selectedHandles).filter(h => currentPageHandles.has(h)).length;
+    
+    if (paginatedHandleKeys.length === 0) {
+        return { isAllOnPageSelected: false, isSomeOnPageSelected: false };
+    }
+
+    return {
+      isAllOnPageSelected: selectedOnPageCount === paginatedHandleKeys.length,
+      isSomeOnPageSelected: selectedOnPageCount > 0 && selectedOnPageCount < paginatedHandleKeys.length,
+    };
+  }, [paginatedHandleKeys, selectedHandles]);
 
 
   return (
@@ -769,6 +793,19 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             )}
         </div>
 
+        {filter === 'mismatched' && paginatedHandleKeys.length > 0 && (
+          <div className="flex items-center border-t border-b px-4 py-2 bg-muted/50">
+            <Checkbox
+              id="select-all-page"
+              checked={isAllOnPageSelected}
+              onCheckedChange={(checked) => handleSelectAllOnPage(!!checked)}
+              aria-label="Select all items on this page"
+            />
+            <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
+              Select all on this page ({paginatedHandleKeys.length} items)
+            </Label>
+          </div>
+        )}
 
         <div className="rounded-md border">
             {paginatedHandleKeys.length > 0 ? (
