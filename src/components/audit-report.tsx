@@ -797,35 +797,33 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
                         return (
                         <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
-                             <AccordionHeader>
-                                <div className="flex items-center flex-grow p-0">
-                                    {filter === 'mismatched' && (
-                                        <div className="p-3 pl-4">
-                                            <Checkbox
-                                                checked={selectedHandles.has(handle)}
-                                                onCheckedChange={(checked) => handleSelectHandle(handle, !!checked)}
-                                                aria-label={`Select product ${handle}`}
-                                            />
+                            <AccordionHeader className="flex items-center p-0">
+                                {filter === 'mismatched' && (
+                                    <div className="p-3 pl-4">
+                                        <Checkbox
+                                            checked={selectedHandles.has(handle)}
+                                            onCheckedChange={(checked) => handleSelectHandle(handle, !!checked)}
+                                            aria-label={`Select product ${handle}`}
+                                        />
+                                    </div>
+                                )}
+                                <AccordionTrigger className="flex-grow p-3 text-left" disabled={isFixing}>
+                                    <div className="flex items-center gap-4 flex-grow">
+                                        <config.icon className={`w-5 h-5 shrink-0 ${
+                                            overallStatus === 'mismatched' ? 'text-yellow-500' 
+                                            : overallStatus === 'missing_in_shopify' ? 'text-red-500'
+                                            : 'text-blue-500'
+                                        }`} />
+                                        <div className="flex-grow text-left">
+                                            <p className="font-semibold">{productTitle}</p>
+                                            <p className="text-sm text-muted-foreground">{handle}</p>
                                         </div>
-                                    )}
-                                    <AccordionTrigger className="flex-grow p-3 text-left" disabled={isFixing}>
-                                        <div className="flex items-center gap-4 flex-grow">
-                                            <config.icon className={`w-5 h-5 shrink-0 ${
-                                                overallStatus === 'mismatched' ? 'text-yellow-500' 
-                                                : overallStatus === 'missing_in_shopify' ? 'text-red-500'
-                                                : 'text-blue-500'
-                                            }`} />
-                                            <div className="flex-grow text-left">
-                                                <p className="font-semibold">{productTitle}</p>
-                                                <p className="text-sm text-muted-foreground">{handle}</p>
-                                            </div>
-                                        </div>
-                                    </AccordionTrigger>
-                                </div>
+                                    </div>
+                                </AccordionTrigger>
                                 <div className="flex items-center gap-2 p-3">
                                      {hasMismatch && <MismatchIcons mismatches={allMismatches} />}
                                     {items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) && (
-                                        <Button size="sm" onClick={() => handleBulkFix(items.filter(i => i.status === 'mismatched'))} disabled={isFixing}>
+                                        <Button size="sm" onClick={(e) => { e.stopPropagation(); handleBulkFix(items.filter(i => i.status === 'mismatched'))}} disabled={isFixing}>
                                             <Bot className="mr-2 h-4 w-4" />
                                             Fix All ({items.flatMap(i => i.mismatches).filter(m => m.field !== 'duplicate_sku').length})
                                         </Button>
@@ -835,7 +833,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                     {items[0].shopifyProduct?.id && (
                                         <Dialog>
                                             <DialogTrigger asChild>
-                                                <Button size="sm" variant="outline" className="w-[160px]">
+                                                <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => e.stopPropagation()}>
                                                     {loadingImageCounts.has(handle) ? (
                                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                                     ) : (
@@ -845,6 +843,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                 </Button>
                                             </DialogTrigger>
                                             <MediaManager 
+                                                key={items[0].shopifyProduct!.id}
                                                 productId={items[0].shopifyProduct!.id}
                                                 onImageCountChange={(count) => onImageCountChange(handle, count)}
                                                 initialImageCount={imageCounts[handle]}
@@ -852,7 +851,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                         </Dialog>
                                     )}
                                     {isMissing && (
-                                        <Button size="sm" variant="outline" className="w-[160px]" onClick={() => setEditingMissingMedia(handle)}>
+                                        <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => {e.stopPropagation(); setEditingMissingMedia(handle)}}>
                                             <ImageIcon className="mr-2 h-4 w-4" />
                                             Manage Media
                                         </Button>
