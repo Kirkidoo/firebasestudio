@@ -63,7 +63,7 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
         if (!isLoading) {
             onImageCountChange(images.length);
         }
-    }, [images.length, onImageCountChange, isLoading]);
+    }, [images, isLoading]);
 
 
     const handleImageSelection = (imageId: number, checked: boolean) => {
@@ -149,20 +149,29 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
 
         startSubmitting(async () => {
             const idsToDelete = Array.from(selectedImageIds);
+            let successfullyDeletedIds: number[] = [];
+            
             const results = await Promise.all(
-                idsToDelete.map(id => deleteImage(productId, id))
+                idsToDelete.map(async (id) => {
+                    const res = await deleteImage(productId, id);
+                    if (res.success) {
+                        successfullyDeletedIds.push(id);
+                    }
+                    return res;
+                })
             );
 
-            const failed = results.filter(r => !r.success);
-            if (failed.length > 0) {
-                 toast({ title: 'Some Deletions Failed', description: `Could not delete ${failed.length} images. Please try again.`, variant: 'destructive' });
-                 // We will still refetch to get the accurate state
-                 await fetchMediaData();
+            const failedCount = results.length - successfullyDeletedIds.length;
+            if (failedCount > 0) {
+                 toast({ title: 'Some Deletions Failed', description: `Could not delete ${failedCount} images. Please try again.`, variant: 'destructive' });
             } else {
-                toast({ title: 'Success!', description: `${selectedImageIds.size} images have been deleted.` });
-                setImages(prevImages => prevImages.filter(img => !idsToDelete.includes(img.id)));
-                setSelectedImageIds(new Set());
+                toast({ title: 'Success!', description: `${successfullyDeletedIds.length} images have been deleted.` });
             }
+
+            if (successfullyDeletedIds.length > 0) {
+                setImages(prevImages => prevImages.filter(img => !successfullyDeletedIds.includes(img.id)));
+            }
+            setSelectedImageIds(new Set());
         });
     }
 
