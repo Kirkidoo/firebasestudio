@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearFixedMismatches } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -27,21 +27,22 @@ import { PreCreationMediaManager } from '@/components/pre-creation-media-manager
 import { Separator } from './ui/separator';
 
 
-type FilterType = 'all' | 'mismatched' | 'missing_in_shopify' | 'not_in_csv';
+type FilterType = 'all' | 'mismatched' | 'missing_in_shopify' | 'not_in_csv' | 'duplicate_in_shopify';
 
 const statusConfig: { [key in Exclude<AuditStatus, 'matched'>]: { icon: React.ElementType, text: string, badgeClass: string } } = {
   mismatched: { icon: AlertTriangle, text: 'Mismatched', badgeClass: 'bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-700' },
   not_in_csv: { icon: PlusCircle, text: 'Not in CSV', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700' },
   missing_in_shopify: { icon: XCircle, text: 'Missing in Shopify', badgeClass: 'bg-red-100 text-red-800 border-red-200 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700' },
+  duplicate_in_shopify: { icon: Copy, text: 'Duplicate in Shopify', badgeClass: 'bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700' },
 };
 
-const getHandle = (item: AuditResult) => item.csvProduct?.handle || item.shopifyProduct?.handle || `no-handle-${item.sku}`;
+const getHandle = (item: AuditResult) => item.shopifyProducts[0]?.handle || item.csvProducts[0]?.handle || `no-handle-${item.sku}`;
 
 const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled, sku }: { mismatches: MismatchDetail[], onFix: (fixType: MismatchDetail['field']) => void, onMarkAsFixed: (fixType: MismatchDetail['field']) => void, disabled: boolean, sku: string }) => {
     return (
         <div className="flex flex-col gap-2 mt-2">
             {mismatches.map((mismatch, index) => {
-                const canBeFixed = mismatch.field !== 'duplicate_sku';
+                const canBeFixed = mismatch.field !== 'duplicate_in_shopify';
                 return (
                      <div key={`${sku}-${mismatch.field}-${index}`} className="flex items-center gap-2 text-xs p-2 rounded-md bg-yellow-50 dark:bg-yellow-900/20">
                          <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
@@ -50,10 +51,10 @@ const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled, sku }: { 
                             {mismatch.field === 'h1_tag' && (
                                  <span className="text-muted-foreground">Product description contains an H1 tag.</span>
                             )}
-                            {mismatch.field === 'duplicate_sku' && (
-                                <span className="text-muted-foreground">SKU exists multiple times in the source CSV.</span>
+                            {mismatch.field === 'duplicate_in_shopify' && (
+                                <span className="text-muted-foreground">SKU exists multiple times in Shopify.</span>
                             )}
-                            {mismatch.field !== 'h1_tag' && mismatch.field !== 'duplicate_sku' && (
+                            {mismatch.field !== 'h1_tag' && mismatch.field !== 'duplicate_in_shopify' && (
                                  <>
                                     <span className="text-red-500 line-through mr-2">{mismatch.shopifyValue ?? 'N/A'}</span>
                                     <span className="text-green-500">{mismatch.csvValue ?? 'N/A'}</span>
@@ -185,7 +186,7 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
 
 const HANDLES_PER_PAGE = 20;
 
-const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_sku'];
+const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify'];
 
 export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: any, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
@@ -219,8 +220,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const uniqueVendors = useMemo(() => {
     const vendors = new Set<string>();
     data.forEach(item => {
-        if (item.status === 'not_in_csv' && item.shopifyProduct?.vendor) {
-            vendors.add(item.shopifyProduct.vendor);
+        if (item.status === 'not_in_csv' && item.shopifyProducts[0]?.vendor) {
+            vendors.add(item.shopifyProducts[0].vendor);
         }
     });
     return ['all', ...Array.from(vendors).sort()];
@@ -255,7 +256,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     if (searchTerm) {
         const lowercasedTerm = searchTerm.toLowerCase();
         results = results.filter(item => {
-            const product = item.csvProduct || item.shopifyProduct;
+            const product = item.csvProducts[0] || item.shopifyProducts[0];
             return (
                 item.sku.toLowerCase().includes(lowercasedTerm) ||
                 (product && product.handle.toLowerCase().includes(lowercasedTerm)) ||
@@ -272,7 +273,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     }
     
     if (filter === 'not_in_csv' && selectedVendor !== 'all') {
-        results = results.filter(item => item.shopifyProduct?.vendor === selectedVendor);
+        results = results.filter(item => item.shopifyProducts[0]?.vendor === selectedVendor);
     }
 
     return results;
@@ -289,8 +290,21 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       }, {} as Record<string, AuditResult[]>);
   }, [filteredData]);
 
+  const groupedBySku = useMemo(() => {
+      if (filter !== 'duplicate_in_shopify') return {};
+      return filteredData.reduce((acc, item) => {
+        if (item.status === 'duplicate_in_shopify') {
+             if (!acc[item.sku]) {
+                acc[item.sku] = [];
+            }
+            acc[item.sku].push(item);
+        }
+        return acc;
+      }, {} as Record<string, AuditResult[]>);
+  }, [filteredData, filter]);
 
-  const handleKeys = Object.keys(groupedByHandle);
+
+  const handleKeys = filter === 'duplicate_in_shopify' ? Object.keys(groupedBySku) : Object.keys(groupedByHandle);
   const totalPages = Math.ceil(handleKeys.length / HANDLES_PER_PAGE);
   const paginatedHandleKeys = handleKeys.slice(
       (currentPage - 1) * HANDLES_PER_PAGE,
@@ -303,12 +317,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       SKU: item.sku,
       Status: item.status,
       Mismatched_Fields: item.mismatches.map(m => m.field).join(', '),
-      CSV_Product_Name: item.csvProduct?.name || 'N/A',
-      Shopify_Product_Name: item.shopifyProduct?.name || 'N/A',
-      CSV_Price: item.csvProduct ? item.csvProduct.price.toFixed(2) : 'N/A',
-      Shopify_Price: item.shopifyProduct ? item.shopifyProduct.price.toFixed(2) : 'N/A',
-      CSV_Inventory: item.csvProduct?.inventory ?? 'N/A',
-      Shopify_Inventory: item.shopifyProduct?.inventory ?? 'N/A',
+      CSV_Product_Name: item.csvProducts[0]?.name || 'N/A',
+      Shopify_Product_Name: item.shopifyProducts[0]?.name || 'N/A',
+      CSV_Price: item.csvProducts[0] ? item.csvProducts[0].price.toFixed(2) : 'N/A',
+      Shopify_Price: item.shopifyProducts[0] ? item.shopifyProducts[0].price.toFixed(2) : 'N/A',
+      CSV_Inventory: item.csvProducts[0]?.inventory ?? 'N/A',
+      Shopify_Inventory: item.shopifyProducts[0]?.inventory ?? 'N/A',
     }));
     downloadCsv(csvData, 'shopsync-audit-report.csv');
   };
@@ -354,7 +368,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
 
   const handleCreate = (item: AuditResult) => {
-    const productToCreate = item.csvProduct;
+    const productToCreate = item.csvProducts[0];
     const missingType = item.mismatches[0]?.missingType;
 
     if (!productToCreate || !missingType) {
@@ -364,8 +378,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     
     // Use the potentially modified reportData to get the latest variants
     const allVariantsForHandle = reportData
-      .filter(d => d.csvProduct?.handle === productToCreate.handle && d.status === 'missing_in_shopify')
-      .map(d => d.csvProduct)
+      .filter(d => d.csvProducts[0]?.handle === productToCreate.handle && d.status === 'missing_in_shopify')
+      .map(d => d.csvProducts[0])
       .filter((p): p is Product => p !== null);
 
     if (allVariantsForHandle.length === 0) {
@@ -379,7 +393,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     let itemsUpdatedCount = 0;
 
     const updatedData = reportData.filter(d => {
-        const shouldRemove = d.csvProduct?.handle === handleToUpdate && d.status === 'missing_in_shopify';
+        const shouldRemove = d.csvProducts[0]?.handle === handleToUpdate && d.status === 'missing_in_shopify';
         if(shouldRemove) {
             itemsUpdatedCount++;
         }
@@ -407,26 +421,35 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     });
   };
 
-  const handleDeleteProduct = (item: AuditResult) => {
-      const productToDelete = item.shopifyProduct;
-      if (!productToDelete || !productToDelete.id) {
+  const handleDeleteProduct = (item: AuditResult, productToDelete?: Product) => {
+      const product = productToDelete || item.shopifyProducts[0];
+      if (!product || !product.id) {
           toast({ title: 'Error', description: 'Cannot delete product, missing product ID.', variant: 'destructive' });
           return;
       }
 
       setShowRefresh(true);
       const originalData = [...reportData];
-      const itemsInHandle = reportData.filter(d => d.shopifyProduct?.handle === productToDelete.handle).length;
-      const newData = reportData.filter(d => d.shopifyProduct?.handle !== productToDelete.handle);
+      
+      const itemsInHandle = reportData.filter(d => d.shopifyProducts.some(p => p.handle === product.handle)).length;
+      const newData = reportData.filter(d => !d.shopifyProducts.some(p => p.handle === product.handle));
+      
       setReportData(newData);
-      setReportSummary((prev: any) => ({
-          ...prev,
-          not_in_csv: prev.not_in_csv - itemsInHandle,
-      }));
+
+      setReportSummary((prev: any) => {
+          const newSummary = {...prev};
+          if(item.status === 'not_in_csv') {
+            newSummary.not_in_csv -= itemsInHandle;
+          }
+          if(item.status === 'duplicate_in_shopify') {
+            newSummary.duplicate_in_shopify -= 1; // It's one duplicate issue resolved
+          }
+          return newSummary;
+      });
 
 
       startTransition(async () => {
-          const result = await deleteFromShopify(productToDelete.id);
+          const result = await deleteFromShopify(product.id);
           if (result.success) {
               toast({ title: 'Success!', description: result.message });
           } else {
@@ -438,7 +461,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   };
 
   const handleDeleteVariant = (item: AuditResult) => {
-      const variantToDelete = item.shopifyProduct;
+      const variantToDelete = item.shopifyProducts[0];
       if (!variantToDelete || !variantToDelete.id || !variantToDelete.variantId) {
           toast({ title: 'Error', description: 'Cannot delete variant, missing ID.', variant: 'destructive' });
           return;
@@ -469,15 +492,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         setReportData(currentReportData => {
             const newReportData = currentReportData.map(auditResult => {
                 // Find the matching variant in the updated list
-                const updatedVariant = updatedVariants.find(uv => uv.sku === auditResult.csvProduct?.sku);
+                const updatedVariant = updatedVariants.find(uv => uv.sku === auditResult.csvProducts[0]?.sku);
                 // If this auditResult corresponds to one of the updated variants, update it
-                if (auditResult.csvProduct && updatedVariant) {
+                if (auditResult.csvProducts[0] && updatedVariant) {
                     return {
                         ...auditResult,
-                        csvProduct: {
-                            ...auditResult.csvProduct,
-                            mediaUrl: updatedVariant.mediaUrl,
-                        },
+                        csvProducts: [updatedVariant],
                     };
                 }
                 // Otherwise, return the original auditResult
@@ -500,7 +520,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             price: <DollarSign className="h-4 w-4" />,
             inventory: <List className="h-4 w-4" />,
             h1_tag: <span className="text-xs font-bold leading-none">H1</span>,
-            duplicate_sku: <FileWarning className="h-4 w-4" />,
+            duplicate_in_shopify: <Copy className="h-4 w-4" />,
             missing_in_shopify: <XCircle className="h-4 w-4" />,
         };
 
@@ -583,8 +603,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const editingMissingMediaVariants = useMemo(() => {
     if (!editingMissingMedia) return [];
     return reportData
-      .filter(d => d.csvProduct?.handle === editingMissingMedia && d.status === 'missing_in_shopify')
-      .map(d => d.csvProduct)
+      .filter(d => d.csvProducts[0]?.handle === editingMissingMedia && d.status === 'missing_in_shopify')
+      .map(d => d.csvProducts[0])
       .filter((p): p is Product => p !== null);
   }, [editingMissingMedia, reportData]);
   
@@ -593,8 +613,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           if(item.status === 'mismatched' && item.mismatches.length > 0) acc.mismatched++;
           if(item.status === 'missing_in_shopify') acc.missing_in_shopify++;
           if(item.status === 'not_in_csv') acc.not_in_csv++;
+          if(item.status === 'duplicate_in_shopify') acc.duplicate_in_shopify++;
           return acc;
-      }, { mismatched: 0, missing_in_shopify: 0, not_in_csv: 0 });
+      }, { mismatched: 0, missing_in_shopify: 0, not_in_csv: 0, duplicate_in_shopify: 0 });
   }, [filteredData]);
   
   const handleAccordionChange = useCallback((value: string) => {
@@ -604,7 +625,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     if (imageCounts[handle] !== undefined || loadingImageCounts.has(handle)) return;
 
     const item = filteredData.find(item => getHandle(item) === handle);
-    const productId = item?.shopifyProduct?.id;
+    const productId = item?.shopifyProducts[0]?.id;
     
     if (productId) {
       setLoadingImageCounts(prev => new Set(prev).add(handle));
@@ -642,6 +663,295 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     };
   }, [paginatedHandleKeys, selectedHandles]);
 
+  const renderRegularReport = () => (
+    <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
+        {paginatedHandleKeys.map((handle) => {
+             const items = groupedByHandle[handle];
+             const productTitle = items[0].csvProducts[0]?.name || items[0].shopifyProducts[0]?.name || handle;
+             const hasMismatch = items.some(i => i.status === 'mismatched' && i.mismatches.length > 0);
+             const isMissing = items.every(i => i.status === 'missing_in_shopify');
+             const notInCsv = items.every(i => i.status === 'not_in_csv');
+             
+             const allMismatches = items.flatMap(i => i.mismatches);
+             
+             const overallStatus: AuditStatus | 'matched' = hasMismatch ? 'mismatched' 
+                 : isMissing ? 'missing_in_shopify'
+                 : notInCsv ? 'not_in_csv'
+                 : 'matched';
+             
+             if (overallStatus === 'matched') {
+                 return null;
+             }
+             
+             const config = statusConfig[overallStatus];
+             
+             const allVariantsForHandleInShopify = data.filter(d => d.shopifyProducts[0]?.handle === handle);
+             const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
+            
+            const productId = items[0].shopifyProducts[0]?.id;
+
+            return (
+            <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
+                <AccordionHeader className="flex items-center p-0">
+                    {filter === 'mismatched' && (
+                        <div className="p-3 pl-4">
+                            <Checkbox
+                                checked={selectedHandles.has(handle)}
+                                onCheckedChange={(checked) => handleSelectHandle(handle, !!checked)}
+                                aria-label={`Select product ${handle}`}
+                            />
+                        </div>
+                    )}
+                    <AccordionTrigger className="flex-grow p-3 text-left" disabled={isFixing}>
+                        <div className="flex items-center gap-4 flex-grow">
+                            <config.icon className={`w-5 h-5 shrink-0 ${
+                                overallStatus === 'mismatched' ? 'text-yellow-500' 
+                                : overallStatus === 'missing_in_shopify' ? 'text-red-500'
+                                : 'text-blue-500'
+                            }`} />
+                            <div className="flex-grow text-left">
+                                <p className="font-semibold">{productTitle}</p>
+                                <p className="text-sm text-muted-foreground">{handle}</p>
+                            </div>
+                        </div>
+                    </AccordionTrigger>
+                    <div className="flex items-center gap-2 p-3">
+                         {hasMismatch && <MismatchIcons mismatches={allMismatches} />}
+                        {items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) && (
+                            <Button size="sm" onClick={(e) => { e.stopPropagation(); handleBulkFix(items.filter(i => i.status === 'mismatched'))}} disabled={isFixing}>
+                                <Bot className="mr-2 h-4 w-4" />
+                                Fix All ({items.flatMap(i => i.mismatches).filter(m => m.field !== 'duplicate_in_shopify').length})
+                            </Button>
+                        )}
+                        <Badge variant="outline" className="w-[80px] justify-center">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
+                        
+                        {productId && (
+                            <Dialog>
+                                <DialogTrigger asChild>
+                                    <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => e.stopPropagation()}>
+                                        {loadingImageCounts.has(handle) ? (
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                            <ImageIcon className="mr-2 h-4 w-4" />
+                                        )}
+                                        Manage Media {imageCounts[handle] !== undefined && `(${imageCounts[handle]})`}
+                                    </Button>
+                                </DialogTrigger>
+                                <MediaManager 
+                                    key={productId}
+                                    productId={productId}
+                                    onImageCountChange={(count) => onImageCountChange(handle, count)}
+                                    initialImageCount={imageCounts[handle]}
+                                />
+                            </Dialog>
+                        )}
+                        {isMissing && (
+                            <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => {e.stopPropagation(); setEditingMissingMedia(handle)}}>
+                                <ImageIcon className="mr-2 h-4 w-4" />
+                                Manage Media
+                            </Button>
+                        )}
+                    </div>
+                </AccordionHeader>
+
+                <AccordionContent>
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead className="w-[150px]">SKU</TableHead>
+                                <TableHead className="w-[180px]">Status</TableHead>
+                                <TableHead>Details</TableHead>
+                                <TableHead className="w-[240px] text-right">Actions</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {items.map((item, index) => {
+                                const itemConfig = statusConfig[item.status as Exclude<AuditStatus, 'matched'>];
+                                const productForDetails = item.csvProducts[0] || item.shopifyProducts[0];
+                                
+                                if (item.status === 'mismatched' && item.mismatches.length === 0) return null;
+
+                                return (
+                                    <TableRow key={item.sku} className={
+                                        item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
+                                        item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' :
+                                        item.status === 'not_in_csv' ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''
+                                    }>
+                                        <TableCell className="font-medium">{item.sku}</TableCell>
+                                        <TableCell>
+                                        <Badge variant="outline" className={`whitespace-nowrap ${itemConfig.badgeClass}`}>
+                                            <itemConfig.icon className="mr-1.5 h-3.5 w-3.5" />
+                                            {itemConfig.text}
+                                        </Badge>
+                                        </TableCell>
+                                         <TableCell>
+                                            <div>
+                                                {item.status === 'mismatched' && item.mismatches.length > 0 && 
+                                                    <MismatchDetails 
+                                                        sku={item.sku}
+                                                        mismatches={item.mismatches} 
+                                                        onFix={(fixType) => handleFixSingleMismatch(item, fixType)} 
+                                                        onMarkAsFixed={(fixType) => handleMarkAsFixed(item.sku, fixType)}
+                                                        disabled={isFixing}
+                                                    />
+                                                }
+                                                {item.status === 'missing_in_shopify' && item.csvProducts[0] && (
+                                                    <p className="text-sm text-muted-foreground">
+                                                        This SKU is in your CSV but is a{' '}
+                                                        <span className="font-semibold text-foreground">
+                                                            {item.mismatches[0]?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
+                                                        </span>.
+                                                    </p>
+                                                )}
+                                                {item.status === 'not_in_csv' && <p className="text-sm text-muted-foreground">This product exists in Shopify but not in your CSV file.</p>}
+                                                <ProductDetails product={productForDetails} />
+                                            </div>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end items-center gap-2">
+                                                {item.status === 'missing_in_shopify' && item.csvProducts[0] && (
+                                                    <MissingProductDetailsDialog product={item.csvProducts[0]} />
+                                                )}
+                                                {isMissing && index === 0 && (
+                                                    <Button size="sm" onClick={() => handleCreate(item)} disabled={isFixing}>
+                                                        <PlusCircle className="mr-2 h-4 w-4" />
+                                                        Create Product
+                                                    </Button>
+                                                )}
+                                                
+                                                 {item.status === 'not_in_csv' && !isOnlyVariantNotInCsv && (
+                                                    <AlertDialog>
+                                                        <AlertDialogTrigger asChild>
+                                                            <Button size="sm" variant="destructive" disabled={isFixing}>
+                                                                <Trash2 className="mr-2 h-4 w-4" /> Delete Variant
+                                                            </Button>
+                                                        </AlertDialogTrigger>
+                                                        <AlertDialogContent>
+                                                            <AlertDialogHeader>
+                                                                <AlertDialogTitle>Delete this variant?</AlertDialogTitle>
+                                                                <AlertDialogDescription>
+                                                                    This will permanently delete the variant with SKU "{item.sku}" from Shopify. This action cannot be undone.
+                                                                </AlertDialogDescription>
+                                                            </AlertDialogHeader>
+                                                            <AlertDialogFooter>
+                                                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                                <AlertDialogAction onClick={() => handleDeleteVariant(item)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                                                    Yes, delete variant
+                                                                </AlertDialogAction>
+                                                            </AlertDialogFooter>
+                                                        </AlertDialogContent>
+                                                    </AlertDialog>
+                                                )}
+
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })}
+                             {notInCsv && isOnlyVariantNotInCsv && (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="text-right p-2">
+                                             <AlertDialog>
+                                                <AlertDialogTrigger asChild>
+                                                    <Button size="sm" variant="destructive" disabled={isFixing}>
+                                                        <Trash2 className="mr-2 h-4 w-4" /> Delete Entire Product
+                                                    </Button>
+                                                </AlertDialogTrigger>
+                                                <AlertDialogContent>
+                                                    <AlertDialogHeader>
+                                                        <AlertDialogTitle>Delete this entire product?</AlertDialogTitle>
+                                                        <AlertDialogDescription>
+                                                            All variants for "{productTitle}" are not in the CSV. This will permanently delete the entire product and its {items.length} variants from Shopify. This action cannot be undone.
+                                                        </AlertDialogDescription>
+                                                    </AlertDialogHeader>
+                                                    <AlertDialogFooter>
+                                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                        <AlertDialogAction onClick={() => handleDeleteProduct(items[0])} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                                            Yes, delete product
+                                                        </AlertDialogAction>
+                                                    </AlertDialogFooter>
+                                                </AlertDialogContent>
+                                            </AlertDialog>
+                                        </TableCell>
+                                    </TableRow>
+                                )}
+                        </TableBody>
+                    </Table>
+                </AccordionContent>
+            </AccordionItem>
+            )
+        })}
+    </Accordion>
+  );
+
+  const renderDuplicateReport = () => (
+      <Accordion type="single" collapsible className="w-full">
+          {paginatedHandleKeys.map((sku) => {
+              const items = groupedBySku[sku];
+              if (!items || items.length === 0) return null;
+
+              const issue = items[0]; // All items in this group share the same issue
+              const config = statusConfig[issue.status as Exclude<AuditStatus, 'matched'>];
+              
+              return (
+                  <AccordionItem value={sku} key={sku} className="border-b last:border-b-0">
+                      <AccordionTrigger className="p-3 text-left" disabled={isFixing}>
+                          <div className="flex items-center gap-4 flex-grow">
+                              <config.icon className="w-5 h-5 shrink-0 text-purple-500" />
+                              <div className="flex-grow text-left">
+                                  <p className="font-semibold">SKU: {sku}</p>
+                                  <p className="text-sm text-muted-foreground">This SKU is used in {issue.shopifyProducts.length} different products.</p>
+                              </div>
+                          </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                          <Table>
+                              <TableHeader>
+                                  <TableRow>
+                                      <TableHead>Product Title</TableHead>
+                                      <TableHead>Product Handle</TableHead>
+                                      <TableHead className="text-right">Actions</TableHead>
+                                  </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                  {issue.shopifyProducts.map(product => (
+                                      <TableRow key={product.id}>
+                                          <TableCell>{product.name}</TableCell>
+                                          <TableCell className="font-mono text-xs">{product.handle}</TableCell>
+                                          <TableCell className="text-right">
+                                               <AlertDialog>
+                                                  <AlertDialogTrigger asChild>
+                                                      <Button size="sm" variant="destructive" disabled={isFixing}>
+                                                          <Trash2 className="mr-2 h-4 w-4" /> Delete Product
+                                                      </Button>
+                                                  </AlertDialogTrigger>
+                                                  <AlertDialogContent>
+                                                      <AlertDialogHeader>
+                                                          <AlertDialogTitle>Delete this product?</AlertDialogTitle>
+                                                          <AlertDialogDescription>
+                                                              This will permanently delete the product "{product.name}" (handle: {product.handle}) from Shopify. This action cannot be undone.
+                                                          </AlertDialogDescription>
+                                                      </AlertDialogHeader>
+                                                      <AlertDialogFooter>
+                                                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                          <AlertDialogAction onClick={() => handleDeleteProduct(issue, product)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                                              Yes, delete product
+                                                          </AlertDialogAction>
+                                                      </AlertDialogFooter>
+                                                  </AlertDialogContent>
+                                              </AlertDialog>
+                                          </TableCell>
+                                      </TableRow>
+                                  ))}
+                              </TableBody>
+                          </Table>
+                      </AccordionContent>
+                  </AccordionItem>
+              )
+          })}
+      </Accordion>
+  );
+
 
   return (
     <>
@@ -651,7 +961,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           <div>
             <CardTitle>Audit Report</CardTitle>
             <CardDescription>
-              Comparison of product data between your CSV file and Shopify. Products are grouped by handle.
+              {filter === 'duplicate_in_shopify' 
+                ? "SKUs that are incorrectly used across multiple products in your Shopify store."
+                : "Comparison of product data between your CSV file and Shopify. Products are grouped by handle."
+              }
             </CardDescription>
              <div className="flex items-center text-sm text-muted-foreground mt-2">
                 <FileText className="h-4 w-4 mr-2" />
@@ -666,35 +979,42 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             </div>
           }
         </div>
-         {duplicates.length > 0 && filter !== 'mismatched' && (
+         {duplicates.length > 0 && filter !== 'duplicate_in_shopify' && (
             <Alert variant="destructive" className="mt-4">
                 <Siren className="h-4 w-4" />
-                <AlertTitle>Duplicate SKUs Found in CSV!</AlertTitle>
+                <AlertTitle>Duplicate SKUs Found in Shopify!</AlertTitle>
                 <AlertDescription>
-                    Your CSV file contains {duplicates.length} duplicated SKUs. These are marked as mismatches in the report but must be fixed in the source file.
+                    Your Shopify store contains {duplicates.length} SKUs that are assigned to multiple products. This can cause issues with inventory and order fulfillment. View them in the 'Duplicate in Shopify' tab.
                 </AlertDescription>
             </Alert>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4">
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <AlertTriangle className="w-6 h-6 text-yellow-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{currentSummary.mismatched}</div>
+                    <div className="text-xl font-bold">{reportSummary.mismatched}</div>
                     <div className="text-xs text-muted-foreground">SKUs Mismatched</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <XCircle className="w-6 h-6 text-red-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{currentSummary.missing_in_shopify}</div>
+                    <div className="text-xl font-bold">{reportSummary.missing_in_shopify}</div>
                     <div className="text-xs text-muted-foreground">SKUs Missing in Shopify</div>
                 </div>
             </div>
             <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
                 <PlusCircle className="w-6 h-6 text-blue-500 shrink-0" />
                 <div>
-                    <div className="text-xl font-bold">{currentSummary.not_in_csv}</div>
+                    <div className="text-xl font-bold">{reportSummary.not_in_csv}</div>
                     <div className="text-xs text-muted-foreground">SKUs Not in CSV</div>
+                </div>
+            </div>
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-card border shadow-sm">
+                <Copy className="w-6 h-6 text-purple-500 shrink-0" />
+                <div>
+                    <div className="text-xl font-bold">{reportSummary.duplicate_in_shopify || 0}</div>
+                    <div className="text-xs text-muted-foreground">Duplicate SKUs in Shopify</div>
                 </div>
             </div>
         </div>
@@ -702,9 +1022,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       <CardContent>
         <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
           <div className="flex flex-wrap gap-2">
-            {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv'] as const).map(f => {
+            {(['all', 'mismatched', 'missing_in_shopify', 'not_in_csv', 'duplicate_in_shopify'] as const).map(f => {
                 const count = f === 'all' 
-                    ? handleKeys.length // Use handleKeys length for 'all' to count groups
+                    ? handleKeys.length
                     : currentSummary[f as Exclude<FilterType, 'all'>];
                 const config = statusConfig[f as keyof typeof statusConfig];
                 if (count === 0 && f !== 'all') return null;
@@ -755,6 +1075,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                             id={type}
                                             checked={mismatchFilters.has(type)}
                                             onCheckedChange={(checked) => handleMismatchFilterChange(type, !!checked)}
+                                            disabled={type === 'duplicate_in_shopify'}
                                         />
                                         <Label htmlFor={type} className="font-normal capitalize">{type.replace(/_/g, ' ')}</Label>
                                     </div>
@@ -800,6 +1121,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
               checked={isAllOnPageSelected}
               onCheckedChange={(checked) => handleSelectAllOnPage(!!checked)}
               aria-label="Select all items on this page"
+              indeterminate={isSomeOnPageSelected}
             />
             <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
               Select all on this page ({paginatedHandleKeys.length} items)
@@ -809,224 +1131,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
         <div className="rounded-md border">
             {paginatedHandleKeys.length > 0 ? (
-                <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
-                    {paginatedHandleKeys.map((handle) => {
-                         const items = groupedByHandle[handle];
-                         const productTitle = items[0].csvProduct?.name || items[0].shopifyProduct?.name || handle;
-                         const hasMismatch = items.some(i => i.status === 'mismatched' && i.mismatches.length > 0);
-                         const isMissing = items.every(i => i.status === 'missing_in_shopify');
-                         const notInCsv = items.every(i => i.status === 'not_in_csv');
-                         
-                         const allMismatches = items.flatMap(i => i.mismatches);
-                         
-                         const overallStatus: AuditStatus | 'matched' = hasMismatch ? 'mismatched' 
-                             : isMissing ? 'missing_in_shopify'
-                             : notInCsv ? 'not_in_csv'
-                             : 'matched';
-                         
-                         if (overallStatus === 'matched') {
-                             return null;
-                         }
-                         
-                         const config = statusConfig[overallStatus];
-                         
-                         const allVariantsForHandleInShopify = data.filter(d => d.shopifyProduct?.handle === handle);
-                         const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
-                        
-                        const productId = items[0].shopifyProduct?.id;
-
-                        return (
-                        <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
-                            <AccordionHeader className="flex items-center p-0">
-                                {filter === 'mismatched' && (
-                                    <div className="p-3 pl-4">
-                                        <Checkbox
-                                            checked={selectedHandles.has(handle)}
-                                            onCheckedChange={(checked) => handleSelectHandle(handle, !!checked)}
-                                            aria-label={`Select product ${handle}`}
-                                        />
-                                    </div>
-                                )}
-                                <AccordionTrigger className="flex-grow p-3 text-left" disabled={isFixing}>
-                                    <div className="flex items-center gap-4 flex-grow">
-                                        <config.icon className={`w-5 h-5 shrink-0 ${
-                                            overallStatus === 'mismatched' ? 'text-yellow-500' 
-                                            : overallStatus === 'missing_in_shopify' ? 'text-red-500'
-                                            : 'text-blue-500'
-                                        }`} />
-                                        <div className="flex-grow text-left">
-                                            <p className="font-semibold">{productTitle}</p>
-                                            <p className="text-sm text-muted-foreground">{handle}</p>
-                                        </div>
-                                    </div>
-                                </AccordionTrigger>
-                                <div className="flex items-center gap-2 p-3">
-                                     {hasMismatch && <MismatchIcons mismatches={allMismatches} />}
-                                    {items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) && (
-                                        <Button size="sm" onClick={(e) => { e.stopPropagation(); handleBulkFix(items.filter(i => i.status === 'mismatched'))}} disabled={isFixing}>
-                                            <Bot className="mr-2 h-4 w-4" />
-                                            Fix All ({items.flatMap(i => i.mismatches).filter(m => m.field !== 'duplicate_sku').length})
-                                        </Button>
-                                    )}
-                                    <Badge variant="outline" className="w-[80px] justify-center">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
-                                    
-                                    {productId && (
-                                        <Dialog>
-                                            <DialogTrigger asChild>
-                                                <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => e.stopPropagation()}>
-                                                    {loadingImageCounts.has(handle) ? (
-                                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <ImageIcon className="mr-2 h-4 w-4" />
-                                                    )}
-                                                    Manage Media {imageCounts[handle] !== undefined && `(${imageCounts[handle]})`}
-                                                </Button>
-                                            </DialogTrigger>
-                                            <MediaManager 
-                                                key={productId}
-                                                productId={productId}
-                                                onImageCountChange={(count) => onImageCountChange(handle, count)}
-                                                initialImageCount={imageCounts[handle]}
-                                            />
-                                        </Dialog>
-                                    )}
-                                    {isMissing && (
-                                        <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => {e.stopPropagation(); setEditingMissingMedia(handle)}}>
-                                            <ImageIcon className="mr-2 h-4 w-4" />
-                                            Manage Media
-                                        </Button>
-                                    )}
-                                </div>
-                            </AccordionHeader>
-
-                            <AccordionContent>
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead className="w-[150px]">SKU</TableHead>
-                                            <TableHead className="w-[180px]">Status</TableHead>
-                                            <TableHead>Details</TableHead>
-                                            <TableHead className="w-[240px] text-right">Actions</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {items.map((item, index) => {
-                                            const itemConfig = statusConfig[item.status as Exclude<AuditStatus, 'matched'>];
-                                            const productForDetails = item.csvProduct || item.shopifyProduct;
-                                            
-                                            if (item.status === 'mismatched' && item.mismatches.length === 0) return null;
-
-                                            return (
-                                                <TableRow key={item.sku} className={
-                                                    item.status === 'mismatched' ? 'bg-yellow-50/50 dark:bg-yellow-900/10' :
-                                                    item.status === 'missing_in_shopify' ? 'bg-red-50/50 dark:bg-red-900/10' :
-                                                    item.status === 'not_in_csv' ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''
-                                                }>
-                                                    <TableCell className="font-medium">{item.sku}</TableCell>
-                                                    <TableCell>
-                                                    <Badge variant="outline" className={`whitespace-nowrap ${itemConfig.badgeClass}`}>
-                                                        <itemConfig.icon className="mr-1.5 h-3.5 w-3.5" />
-                                                        {itemConfig.text}
-                                                    </Badge>
-                                                    </TableCell>
-                                                     <TableCell>
-                                                        <div>
-                                                            {item.status === 'mismatched' && item.mismatches.length > 0 && 
-                                                                <MismatchDetails 
-                                                                    sku={item.sku}
-                                                                    mismatches={item.mismatches} 
-                                                                    onFix={(fixType) => handleFixSingleMismatch(item, fixType)} 
-                                                                    onMarkAsFixed={(fixType) => handleMarkAsFixed(item.sku, fixType)}
-                                                                    disabled={isFixing}
-                                                                />
-                                                            }
-                                                            {item.status === 'missing_in_shopify' && item.csvProduct && (
-                                                                <p className="text-sm text-muted-foreground">
-                                                                    This SKU is in your CSV but is a{' '}
-                                                                    <span className="font-semibold text-foreground">
-                                                                        {item.mismatches[0]?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
-                                                                    </span>.
-                                                                </p>
-                                                            )}
-                                                            {item.status === 'not_in_csv' && <p className="text-sm text-muted-foreground">This product exists in Shopify but not in your CSV file.</p>}
-                                                            <ProductDetails product={productForDetails} />
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <div className="flex justify-end items-center gap-2">
-                                                            {item.status === 'missing_in_shopify' && item.csvProduct && (
-                                                                <MissingProductDetailsDialog product={item.csvProduct} />
-                                                            )}
-                                                            {isMissing && index === 0 && (
-                                                                <Button size="sm" onClick={() => handleCreate(item)} disabled={isFixing}>
-                                                                    <PlusCircle className="mr-2 h-4 w-4" />
-                                                                    Create Product
-                                                                </Button>
-                                                            )}
-                                                            
-                                                             {item.status === 'not_in_csv' && !isOnlyVariantNotInCsv && (
-                                                                <AlertDialog>
-                                                                    <AlertDialogTrigger asChild>
-                                                                        <Button size="sm" variant="destructive" disabled={isFixing}>
-                                                                            <Trash2 className="mr-2 h-4 w-4" /> Delete Variant
-                                                                        </Button>
-                                                                    </AlertDialogTrigger>
-                                                                    <AlertDialogContent>
-                                                                        <AlertDialogHeader>
-                                                                            <AlertDialogTitle>Delete this variant?</AlertDialogTitle>
-                                                                            <AlertDialogDescription>
-                                                                                This will permanently delete the variant with SKU "{item.sku}" from Shopify. This action cannot be undone.
-                                                                            </AlertDialogDescription>
-                                                                        </AlertDialogHeader>
-                                                                        <AlertDialogFooter>
-                                                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                                            <AlertDialogAction onClick={() => handleDeleteVariant(item)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                                                                Yes, delete variant
-                                                                            </AlertDialogAction>
-                                                                        </AlertDialogFooter>
-                                                                    </AlertDialogContent>
-                                                                </AlertDialog>
-                                                            )}
-
-                                                        </div>
-                                                    </TableCell>
-                                                </TableRow>
-                                            );
-                                        })}
-                                         {notInCsv && isOnlyVariantNotInCsv && (
-                                                <TableRow>
-                                                    <TableCell colSpan={4} className="text-right p-2">
-                                                         <AlertDialog>
-                                                            <AlertDialogTrigger asChild>
-                                                                <Button size="sm" variant="destructive" disabled={isFixing}>
-                                                                    <Trash2 className="mr-2 h-4 w-4" /> Delete Entire Product
-                                                                </Button>
-                                                            </AlertDialogTrigger>
-                                                            <AlertDialogContent>
-                                                                <AlertDialogHeader>
-                                                                    <AlertDialogTitle>Delete this entire product?</AlertDialogTitle>
-                                                                    <AlertDialogDescription>
-                                                                        All variants for "{productTitle}" are not in the CSV. This will permanently delete the entire product and its {items.length} variants from Shopify. This action cannot be undone.
-                                                                    </AlertDialogDescription>
-                                                                </AlertDialogHeader>
-                                                                <AlertDialogFooter>
-                                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                                    <AlertDialogAction onClick={() => handleDeleteProduct(items[0])} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                                                        Yes, delete product
-                                                                    </AlertDialogAction>
-                                                                </AlertDialogFooter>
-                                                            </AlertDialogContent>
-                                                        </AlertDialog>
-                                                    </TableCell>
-                                                </TableRow>
-                                            )}
-                                    </TableBody>
-                                </Table>
-                            </AccordionContent>
-                        </AccordionItem>
-                        )
-                    })}
-                </Accordion>
+                filter === 'duplicate_in_shopify' ? renderDuplicateReport() : renderRegularReport()
             ) : (
                 <div className="h-48 text-center flex flex-col items-center justify-center text-muted-foreground">
                     <Search className="h-10 w-10 mb-4" />

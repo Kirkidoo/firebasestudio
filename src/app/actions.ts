@@ -107,11 +107,10 @@ async function getCsvStreamFromFtp(csvFileName: string, ftpData: FormData): Prom
 }
 
 
-async function parseCsvFromStream(stream: Readable): Promise<{products: Product[], duplicates: DuplicateSku[]}> {
+async function parseCsvFromStream(stream: Readable): Promise<{products: Product[]}> {
     console.log('Parsing CSV from stream...');
     const records: Product[] = [];
-    const skuCounts = new Map<string, number>();
-
+    
     const parser = stream.pipe(parse({
         columns: true,
         skip_empty_lines: true,
@@ -120,10 +119,6 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
 
     for await (const record of parser) {
         const sku = record.SKU;
-        if (sku) {
-            skuCounts.set(sku, (skuCounts.get(sku) || 0) + 1);
-        }
-        
         const price = parseFloat(record.Price);
         const inventory = record['Variant Inventory Qty'] ? parseInt(record['Variant Inventory Qty'], 10) : null;
         
@@ -171,35 +166,33 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
     }
     console.log(`Parsed ${records.length} products from CSV.`);
     
-    const duplicates: DuplicateSku[] = [];
-    for(const [sku, count] of skuCounts.entries()) {
-        if (count > 1) {
-            duplicates.push({ sku, count });
-        }
-    }
-    console.log(`Found ${duplicates.length} duplicate SKUs in CSV.`);
-    
-    return { products: records, duplicates };
+    return { products: records };
 }
 
-async function runAuditComparison(csvProducts: Product[], shopifyProducts: Product[], duplicates: DuplicateSku[]): Promise<{ report: AuditResult[], summary: any }> {
+async function runAuditComparison(csvProducts: Product[], shopifyProducts: Product[], shopifyDuplicates: AuditResult[]): Promise<{ report: AuditResult[], summary: any }> {
     const csvProductMap = new Map(csvProducts.map(p => [p.sku, p]));
     console.log(`Created map with ${csvProductMap.size} products from CSV.`);
 
-    const shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
+    let shopifyProductMap = new Map(shopifyProducts.map(p => [p.sku, p]));
     const shopifyHandleSet = new Set(shopifyProducts.map(p => p.handle));
     console.log(`Created map with ${shopifyProductMap.size} products from Shopify.`);
 
     console.log('Running audit comparison logic...');
-    const report: AuditResult[] = [];
+    let report: AuditResult[] = [...shopifyDuplicates]; // Start with Shopify duplicates
     let matchedCount = 0;
-    const summary = { mismatched: 0, not_in_csv: 0, missing_in_shopify: 0 };
-    
-    const duplicateSkuSet = new Set(duplicates.map(d => d.sku));
+    const summary = { mismatched: 0, not_in_csv: 0, missing_in_shopify: 0, duplicate_in_shopify: shopifyDuplicates.length };
+
+    // Exclude duplicated SKUs from regular comparison
+    const duplicateSkuSet = new Set(shopifyDuplicates.map(d => d.sku));
+    shopifyProductMap = new Map([...shopifyProductMap].filter(([sku]) => !duplicateSkuSet.has(sku)));
 
     for (const csvProduct of csvProducts) {
+        if (duplicateSkuSet.has(csvProduct.sku)) {
+            // This SKU is part of a Shopify duplicate issue, so we skip it in the main comparison.
+            continue;
+        }
+
         const shopifyProduct = shopifyProductMap.get(csvProduct.sku);
-        const isDuplicate = duplicateSkuSet.has(csvProduct.sku);
 
         if (shopifyProduct) {
             const mismatches: MismatchDetail[] = [];
@@ -220,59 +213,40 @@ async function runAuditComparison(csvProducts: Product[], shopifyProducts: Produ
             if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
                 mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
             }
-            if(isDuplicate) {
-                 mismatches.push({ field: 'duplicate_sku', csvValue: 'SKU is duplicated in CSV', shopifyValue: null });
-            }
 
             if (mismatches.length > 0) {
-                report.push({ sku: csvProduct.sku, csvProduct, shopifyProduct, status: 'mismatched', mismatches });
+                report.push({ sku: csvProduct.sku, csvProducts: [csvProduct], shopifyProducts: [shopifyProduct], status: 'mismatched', mismatches });
                 summary.mismatched++;
             } else {
                 matchedCount++;
             }
             shopifyProductMap.delete(csvProduct.sku);
         } else {
-             if (isDuplicate) {
-                // If it's missing AND a duplicate, report as a mismatch with a duplicate SKU error
-                report.push({
-                    sku: csvProduct.sku,
-                    csvProduct,
-                    shopifyProduct: null,
-                    status: 'mismatched',
-                    mismatches: [{
-                        field: 'duplicate_sku',
-                        csvValue: 'SKU is duplicated in CSV',
-                        shopifyValue: 'Product also missing in Shopify'
-                    }]
-                });
-                summary.mismatched++;
-            } else {
-                const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
-                report.push({
-                    sku: csvProduct.sku,
-                    csvProduct,
-                    shopifyProduct: null,
-                    status: 'missing_in_shopify',
-                    mismatches: [{
-                        field: 'missing_in_shopify',
-                        csvValue: `SKU: ${csvProduct.sku}`,
-                        shopifyValue: null,
-                        missingType: missingType,
-                    }]
-                });
-                summary.missing_in_shopify++;
-            }
+            const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
+            report.push({
+                sku: csvProduct.sku,
+                csvProducts: [csvProduct],
+                shopifyProducts: [],
+                status: 'missing_in_shopify',
+                mismatches: [{
+                    field: 'missing_in_shopify',
+                    csvValue: `SKU: ${csvProduct.sku}`,
+                    shopifyValue: null,
+                    missingType: missingType,
+                }]
+            });
+            summary.missing_in_shopify++;
         }
     }
 
     for (const shopifyProduct of shopifyProductMap.values()) {
-        report.push({ sku: shopifyProduct.sku, csvProduct: null, shopifyProduct, status: 'not_in_csv', mismatches: [] });
+        report.push({ sku: shopifyProduct.sku, csvProducts: [], shopifyProducts: [shopifyProduct], status: 'not_in_csv', mismatches: [] });
         summary.not_in_csv++;
     }
 
     report.sort((a, b) => {
-        const handleA = a.csvProduct?.handle || a.shopifyProduct?.handle || '';
-        const handleB = b.csvProduct?.handle || b.shopifyProduct?.handle || '';
+        const handleA = a.shopifyProducts[0]?.handle || a.csvProducts[0]?.handle || '';
+        const handleB = b.shopifyProducts[0]?.handle || b.csvProducts[0]?.handle || '';
         if (handleA !== handleB) {
             return handleA.localeCompare(handleB);
         }
@@ -290,13 +264,11 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   console.log(`Starting audit for file: ${csvFileName}`);
   
   let csvProducts: Product[] = [];
-  let duplicateSkus: DuplicateSku[] = [];
 
   try {
     const readableStream = await getCsvStreamFromFtp(csvFileName, ftpData);
     const parsedData = await parseCsvFromStream(readableStream);
     csvProducts = parsedData.products;
-    duplicateSkus = parsedData.duplicates;
   } catch (error) {
     console.error("Failed to download or parse CSV from FTP", error);
     throw new Error(`Could not download or process file '${csvFileName}' from FTP.`);
@@ -311,9 +283,10 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
   console.log(`Fetching ${skusFromCsv.length} products from Shopify based on CSV SKUs...`);
   const shopifyProducts = await getShopifyProductsBySku(skusFromCsv);
   
-  const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts, duplicateSkus);
+  const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts, []);
 
-  return { report, summary, duplicates: duplicateSkus };
+  // Regular audit does not support duplicate checking, so return empty array
+  return { report, summary, duplicates: [] };
 }
 
 export async function checkBulkCacheStatus(): Promise<{ lastModified: string | null }> {
@@ -332,13 +305,11 @@ export async function runBulkAudit(
     useCache: boolean
 ): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
     let csvProducts: Product[] = [];
-    let duplicateSkus: DuplicateSku[] = [];
 
     try {
         const readableStream = await getCsvStreamFromFtp(csvFileName, ftpData);
         const parsedData = await parseCsvFromStream(readableStream);
         csvProducts = parsedData.products;
-        duplicateSkus = parsedData.duplicates;
     } catch (error) {
         console.error("Failed to download or parse CSV from FTP", error);
         throw new Error(`Could not download or process file '${csvFileName}' from FTP.`);
@@ -391,10 +362,43 @@ export async function runBulkAudit(
         shopifyProducts = await parseBulkOperationResult(resultJsonl);
     }
     
-    console.log('Generating audit report...');
-    const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts, duplicateSkus);
+    // --- New Duplicate SKU check for Bulk Audit ---
+    console.log('Checking for duplicate SKUs in Shopify...');
+    const skuToProductsMap = new Map<string, Product[]>();
+    for(const product of shopifyProducts) {
+        if(!skuToProductsMap.has(product.sku)) {
+            skuToProductsMap.set(product.sku, []);
+        }
+        skuToProductsMap.get(product.sku)!.push(product);
+    }
 
-    return { report, summary, duplicates: duplicateSkus };
+    const shopifyDuplicates: AuditResult[] = [];
+    for(const [sku, products] of skuToProductsMap.entries()) {
+        const uniqueHandles = new Set(products.map(p => p.handle));
+        if(uniqueHandles.size > 1) {
+            console.log(`Found duplicate SKU in Shopify: ${sku} across handles: ${Array.from(uniqueHandles).join(', ')}`);
+            shopifyDuplicates.push({
+                sku: sku,
+                csvProducts: [],
+                shopifyProducts: products,
+                status: 'duplicate_in_shopify',
+                mismatches: [{
+                    field: 'duplicate_in_shopify',
+                    csvValue: null,
+                    shopifyValue: `Used in ${uniqueHandles.size} products`
+                }]
+            });
+        }
+    }
+    console.log(`Found ${shopifyDuplicates.length} SKUs duplicated across different products in Shopify.`);
+
+
+    console.log('Generating audit report...');
+    const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts, shopifyDuplicates);
+
+    // Legacy duplicates format for card, can be removed later if card is updated.
+    const duplicatesForCard: DuplicateSku[] = shopifyDuplicates.map(d => ({ sku: d.sku, count: d.shopifyProducts.length }));
+    return { report, summary, duplicates: duplicatesForCard };
 }
 
 
@@ -439,9 +443,9 @@ async function _fixSingleMismatch(
                     await updateProduct(fixPayload.id, { bodyHtml: newDescription });
                 }
                 break;
-             case 'duplicate_sku':
+             case 'duplicate_in_shopify':
                 // This is a warning, cannot be fixed programmatically. Handled client-side.
-                return { success: true, message: `SKU ${csvProduct.sku} is a duplicate, no server action taken.` };
+                return { success: true, message: `SKU ${csvProduct.sku} is a duplicate in Shopify, no server action taken.` };
         }
         return { success: true, message: `Successfully fixed ${fixType} for ${csvProduct.sku}` };
     } catch (error) {
@@ -457,12 +461,15 @@ export async function fixMultipleMismatches(items: AuditResult[]): Promise<{ suc
     const itemResults = [];
 
     for (const item of items) {
-        if (item.status !== 'mismatched' || !item.csvProduct || !item.shopifyProduct) {
+        if (item.status !== 'mismatched' || item.csvProducts.length === 0 || item.shopifyProducts.length === 0) {
             continue;
         }
 
+        const csvProduct = item.csvProducts[0];
+        const shopifyProduct = item.shopifyProducts[0];
+
         for (const mismatch of item.mismatches) {
-            const result = await _fixSingleMismatch(mismatch.field, item.csvProduct, item.shopifyProduct);
+            const result = await _fixSingleMismatch(mismatch.field, csvProduct, shopifyProduct);
             if (result.success) {
                 fixCount++;
             }
@@ -727,4 +734,5 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
     
+
 
