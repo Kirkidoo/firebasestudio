@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useTransition, useEffect, useMemo, useCallback } from 'react';
+import { useState, useTransition, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AuditResult, AuditStatus, DuplicateSku, MismatchDetail, Product, ShopifyProductImage } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -204,6 +204,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
   const [loadingImageCounts, setLoadingImageCounts] = useState<Set<string>>(new Set());
+  
+  const selectAllCheckboxRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setReportData(data);
@@ -663,6 +665,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       isSomeOnPageSelected: selectedOnPageCount > 0 && selectedOnPageCount < paginatedHandleKeys.length,
     };
   }, [paginatedHandleKeys, selectedHandles]);
+
+  useEffect(() => {
+      if (selectAllCheckboxRef.current) {
+          selectAllCheckboxRef.current.indeterminate = isSomeOnPageSelected;
+      }
+  }, [isSomeOnPageSelected]);
 
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
@@ -1141,11 +1149,11 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         {filter === 'mismatched' && paginatedHandleKeys.length > 0 && (
           <div className="flex items-center border-t border-b px-4 py-2 bg-muted/50">
             <Checkbox
+              ref={selectAllCheckboxRef}
               id="select-all-page"
               checked={isAllOnPageSelected}
               onCheckedChange={(checked) => handleSelectAllOnPage(!!checked)}
               aria-label="Select all items on this page"
-              indeterminate={isSomeOnPageSelected || undefined}
             />
             <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
               Select all on this page ({paginatedHandleKeys.length} items)
