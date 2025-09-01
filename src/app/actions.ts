@@ -506,6 +506,20 @@ export async function createInShopify(
     fileName: string
 ) {
     console.log(`Attempting to create product/variant for Handle: ${product.handle}`);
+    
+    // Final pre-creation check to prevent duplicates
+    const skusToCreate = allVariantsForHandle.map(p => p.sku);
+    console.log(`Performing final check for SKUs: ${skusToCreate.join(', ')}`);
+    const existingProducts = await getShopifyProductsBySku(skusToCreate);
+    if (existingProducts.length > 0) {
+        const foundSkus = existingProducts.map(p => p.sku).join(', ');
+        const errorMessage = `Creation aborted. The following SKU(s) already exist in Shopify: ${foundSkus}. Please run a new audit.`;
+        console.error(errorMessage);
+        return { success: false, message: errorMessage };
+    }
+    console.log('Final check passed. No existing SKUs found.');
+
+
     const missingType = allVariantsForHandle.length > 1 ? 'product' : 'variant';
     try {
         let createdProduct;
@@ -753,6 +767,8 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
       
+
+    
 
     
 
