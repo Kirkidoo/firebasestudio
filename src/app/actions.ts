@@ -195,10 +195,7 @@ export async function runAuditComparison(csvProducts: Product[], shopifyProducts
     const csvProductMap = new Map(csvProducts.map(p => [p.sku, p]));
     console.log(`Created map with ${csvProductMap.size} products from CSV.`);
     
-    const csvHandleMap = new Map<string, number>();
-     csvProducts.forEach(p => {
-        csvHandleMap.set(p.handle, (csvHandleMap.get(p.handle) || 0) + 1);
-    });
+    const shopifyHandleSet = new Set(shopifyProducts.map(p => p.handle));
 
     const shopifyProductMap = new Map<string, Product[]>();
     for (const p of shopifyProducts) {
@@ -268,8 +265,7 @@ export async function runAuditComparison(csvProducts: Product[], shopifyProducts
             }
         } else {
             // --- MISSING IN SHOPIFY ---
-            const variantsInHandle = csvHandleMap.get(csvProduct.handle) || 1;
-            const missingType = variantsInHandle > 1 ? 'product' : 'variant';
+            const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
 
             report.push({
                 sku: csvProduct.sku,
@@ -757,6 +753,8 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
       
+
+    
 
     
 
