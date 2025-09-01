@@ -33,8 +33,11 @@ export function downloadCsv(data: any[], filename: string) {
   }
 }
 
-// --- Local Storage for Fixed Mismatches ---
+// --- Local Storage for Audit Report State ---
 const FIXED_MISMATCHES_KEY = 'fixedMismatches';
+const CREATED_PRODUCTS_KEY = 'createdProducts';
+
+// --- Mismatches ---
 
 export function getFixedMismatches(): Set<string> {
     if (typeof window === 'undefined') {
@@ -59,9 +62,37 @@ export function markMismatchAsFixed(sku: string, field: string) {
     localStorage.setItem(FIXED_MISMATCHES_KEY, JSON.stringify(Array.from(currentFixed)));
 }
 
-export function clearFixedMismatches() {
-    if (typeof window === 'undefined') return;
-    localStorage.removeItem(FIXED_MISMATCHES_KEY);
+// --- Created Products ---
+
+export function getCreatedProductHandles(): Set<string> {
+    if (typeof window === 'undefined') {
+        return new Set();
+    }
+    const saved = localStorage.getItem(CREATED_PRODUCTS_KEY);
+    if (!saved) {
+        return new Set();
+    }
+    try {
+        const parsed = JSON.parse(saved);
+        return new Set(Array.isArray(parsed) ? parsed : []);
+    } catch (e) {
+        return new Set();
+    }
 }
 
+export function markProductAsCreated(handle: string) {
+    if (typeof window === 'undefined') return;
+    const currentCreated = getCreatedProductHandles();
+    currentCreated.add(handle);
+    localStorage.setItem(CREATED_PRODUCTS_KEY, JSON.stringify(Array.from(currentCreated)));
+}
+
+
+// --- Clear All ---
+
+export function clearAuditMemory() {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(FIXED_MISMATCHES_KEY);
+    localStorage.removeItem(CREATED_PRODUCTS_KEY);
+}
     

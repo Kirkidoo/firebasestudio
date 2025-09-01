@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearFixedMismatches } from '@/lib/utils';
+import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearAuditMemory, getCreatedProductHandles, markProductAsCreated } from '@/lib/utils';
 import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -202,6 +202,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [editingMissingMedia, setEditingMissingMedia] = useState<string | null>(null);
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
+  const [createdProductHandles, setCreatedProductHandles] = useState<Set<string>>(new Set());
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
   const [loadingImageCounts, setLoadingImageCounts] = useState<Set<string>>(new Set());
   
@@ -214,6 +215,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setCurrentPage(1);
     setSelectedHandles(new Set());
     setFixedMismatches(getFixedMismatches());
+    setCreatedProductHandles(getCreatedProductHandles());
     setImageCounts({});
     setLoadingImageCounts(new Set());
   }, [data, summary]);
@@ -230,20 +232,21 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
 
   const filteredData = useMemo(() => {
-    // Start with the raw report data
     let results: AuditResult[] = reportData.map(item => {
-        // If the item has mismatches, filter out any that have been fixed
-        if (item.mismatches && item.mismatches.length > 0) {
+        if (item.status === 'mismatched' && item.mismatches && item.mismatches.length > 0) {
             const remainingMismatches = item.mismatches.filter(m => !fixedMismatches.has(`${item.sku}-${m.field}`));
-            // If all mismatches were fixed, we could potentially treat this item as 'matched'
-            // For now, we'll just remove the fixed mismatches from the list.
             return { ...item, mismatches: remainingMismatches };
         }
         return item;
     }).filter(item => {
-        // Remove items from the report if their only status was 'mismatched' and all mismatches are now fixed
         if (item.status === 'mismatched' && item.mismatches.length === 0) {
             return false;
+        }
+        if (item.status === 'missing_in_shopify') {
+            const handle = getHandle(item);
+            if (createdProductHandles.has(handle)) {
+                return false;
+            }
         }
         return true;
     });
@@ -278,7 +281,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     }
 
     return results;
-  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor, fixedMismatches]);
+  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor, fixedMismatches, createdProductHandles]);
 
   const groupedByHandle = useMemo(() => {
       return filteredData.reduce((acc, item) => {
@@ -391,35 +394,16 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     }
     
     setShowRefresh(true);
-    const originalData = [...reportData];
-    const handleToUpdate = productToCreate.handle;
-    let itemsUpdatedCount = 0;
-
-    const updatedData = reportData.filter(d => {
-        const shouldRemove = d.csvProducts[0]?.handle === handleToUpdate && d.status === 'missing_in_shopify';
-        if(shouldRemove) {
-            itemsUpdatedCount++;
-        }
-        return !shouldRemove;
-    });
     
-    setReportData(updatedData);
-
-    setReportSummary((prev: any) => ({
-        ...prev,
-        missing_in_shopify: prev.missing_in_shopify - itemsUpdatedCount,
-        matched: (prev.matched ?? 0) + itemsUpdatedCount,
-    }));
-
-
     startTransition(async () => {
         const result = await createInShopify(productToCreate, allVariantsForHandle, fileName, missingType);
         if (result.success) {
             toast({ title: 'Success!', description: result.message });
+            // Remember that this handle has been created
+            markProductAsCreated(productToCreate.handle);
+            setCreatedProductHandles(prev => new Set(prev).add(productToCreate.handle));
         } else {
             toast({ title: 'Creation Failed', description: result.message, variant: 'destructive' });
-            setReportData(originalData);
-            setReportSummary(summary);
         }
     });
   };
@@ -427,36 +411,22 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const handleBulkCreate = (itemsToCreate: { product: Product; allVariants: Product[]; missingType: 'product' | 'variant' }[]) => {
       setShowRefresh(true);
 
-      const handlesToUpdate = new Set(itemsToCreate.map(item => item.product.handle));
-      const originalData = [...reportData];
-      let itemsUpdatedCount = 0;
-
-      const updatedData = reportData.filter(d => {
-          const handle = d.csvProducts[0]?.handle;
-          const shouldRemove = handle && handlesToUpdate.has(handle) && d.status === 'missing_in_shopify';
-          if (shouldRemove) {
-              itemsUpdatedCount++;
-          }
-          return !shouldRemove;
-      });
-
-      setReportData(updatedData);
-      setReportSummary((prev: any) => ({
-          ...prev,
-          missing_in_shopify: prev.missing_in_shopify - itemsUpdatedCount,
-          matched: (prev.matched ?? 0) + itemsUpdatedCount,
-      }));
-      setSelectedHandles(new Set());
-
       startTransition(async () => {
           const result = await createMultipleInShopify(itemsToCreate, fileName);
           if (result.success) {
               toast({ title: 'Bulk Create Complete!', description: result.message });
+              const newCreatedHandles = new Set(createdProductHandles);
+              result.results.forEach(createdItem => {
+                  if (createdItem.success) {
+                    markProductAsCreated(createdItem.handle);
+                    newCreatedHandles.add(createdItem.handle);
+                  }
+              });
+              setCreatedProductHandles(newCreatedHandles);
           } else {
               toast({ title: 'Bulk Create Failed', description: result.message, variant: 'destructive' });
-              setReportData(originalData); // Revert on failure
-              setReportSummary(summary);
           }
+          setSelectedHandles(new Set());
       });
   };
   
@@ -652,10 +622,11 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setSelectedHandles(newSelectedHandles);
   };
   
-  const handleClearFixedMismatches = () => {
-    clearFixedMismatches();
+  const handleClearAuditMemory = () => {
+    clearAuditMemory();
     setFixedMismatches(new Set());
-    toast({ title: "Cleared 'Remembered' Fixes", description: "The report is now showing all original mismatches. Run a new non-cached audit for the latest data." });
+    setCreatedProductHandles(new Set());
+    toast({ title: "Cleared 'Remembered' Fixes & Creations", description: "The report is now showing all original items. Run a new non-cached audit for the latest data." });
   }
   
   const handleMarkAsFixed = (sku: string, field: MismatchDetail['field']) => {
@@ -1180,7 +1151,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         </div>
                         <Separator />
                         <div className="p-2">
-                           <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleClearFixedMismatches}>
+                           <Button variant="ghost" size="sm" className="w-full justify-start" onClick={handleClearAuditMemory}>
                              <Eraser className="mr-2 h-4 w-4"/>
                              Clear remembered fixes
                            </Button>

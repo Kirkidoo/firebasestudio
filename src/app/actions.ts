@@ -126,7 +126,7 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
         const compareAtPrice = compareAtPriceText && !isNaN(parseFloat(compareAtPriceText)) ? parseFloat(compareAtPriceText) : null;
 
         const costPerItemText = record['Cost Per Item'];
-        const costPerItem = costPerItemText && !isNaN(parseFloat(costPerItemText)) ? parseFloat(costPerItemText) : null;
+        const costPerItem = costPerItemText && !isNaN-n(parseFloat(costPerItemText)) ? parseFloat(costPerItemText) : null;
 
         const weight = record['Variant Grams'] ? parseFloat(record['Variant Grams']) : null;
         
@@ -326,7 +326,7 @@ export async function runAuditComparison(csvProducts: Product[], shopifyProducts
 
 
 export async function runAudit(csvFileName: string, ftpData: FormData, onProgress: (message: string) => void): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
-  console.log(`Starting audit for file: ${csvFileName}`);
+  onProgress(`Starting audit for file: ${csvFileName}`);
   
   let csvProducts: Product[] = [];
 
@@ -347,16 +347,20 @@ export async function runAudit(csvFileName: string, ftpData: FormData, onProgres
   }
   onProgress(`Found ${csvProducts.length} products in CSV.`);
 
-  const skusFromCsv = csvProducts.map(p => p.sku);
-  onProgress(`Fetching ${skusFromCsv.length} product variants from Shopify...`);
-  const shopifyProducts = await getShopifyProductsBySku(skusFromCsv);
-  onProgress(`Found ${shopifyProducts.length} matching variants in Shopify.`);
+  onProgress(`Fetching product variants from Shopify...`);
+  const allShopifyProducts = await getShopifyProductsFromCache(); // This will read from cache
+  onProgress(`Found ${allShopifyProducts.length} total variants in Shopify cache.`);
   
   onProgress('Comparing CSV and Shopify data...');
-  const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts);
+  const { report, summary } = await runAuditComparison(csvProducts, allShopifyProducts);
 
+  onProgress('Audit Complete!');
+  const duplicatesForCard: DuplicateSku[] = report
+    .filter(d => d.status === 'duplicate_in_shopify')
+    .map(d => ({ sku: d.sku, count: d.shopifyProducts.length }));
+  
   const finalReport = report.filter(item => item.status !== 'matched' && item.status !== 'duplicate_in_shopify');
-  return { report: finalReport, summary, duplicates: [] };
+  return { report: finalReport, summary, duplicates: duplicatesForCard };
 }
 
 export async function checkBulkCacheStatus(): Promise<{ lastModified: string | null }> {
