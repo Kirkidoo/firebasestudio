@@ -179,6 +179,7 @@ async function parseCsvFromStream(stream: Readable): Promise<{products: Product[
                 option3Name: record['Option3 Name'] || null,
                 option3Value: record['Option3 Value'] || null,
                 imageId: null, // Shopify only
+                templateSuffix: null, // Shopify only
             });
             handledHandles.add(handle);
         }
@@ -207,6 +208,14 @@ function findMismatches(csvProduct: Product, shopifyProduct: Product): MismatchD
     if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
         mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
     }
+
+    // Heavy product check: weight > 50lbs (22679.6 grams)
+    if (shopifyProduct.weight && shopifyProduct.weight > 22679.6) {
+        if (shopifyProduct.templateSuffix !== 'heavy-products') {
+            mismatches.push({ field: 'heavy_product_template', csvValue: 'heavy-products', shopifyValue: shopifyProduct.templateSuffix || 'none' });
+        }
+    }
+    
     return mismatches;
 }
 
@@ -475,6 +484,9 @@ async function _fixSingleMismatch(
                     await updateProduct(fixPayload.id, { bodyHtml: newDescription });
                 }
                 break;
+            case 'heavy_product_template':
+                // This fix is not yet implemented
+                return { success: false, message: `Fix for heavy product template is not yet implemented.` };
              case 'duplicate_in_shopify':
                 // This is a warning, cannot be fixed programmatically. Handled client-side.
                 return { success: true, message: `SKU ${csvProduct.sku} is a duplicate in Shopify, no server action taken.` };

@@ -282,6 +282,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                                 option2Value: null,
                                 option3Name: null,
                                 option3Value: null,
+                                templateSuffix: null,
                             });
                         }
                     }
@@ -412,6 +413,13 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
     
     if(restOptions.length > 0) {
         productPayload.product.options = restOptions;
+    }
+
+    // Assign heavy product template if weight > 50 lbs (22679.6 grams)
+    const isHeavy = productVariants.some(p => p.weight && p.weight > 22679.6);
+    if (isHeavy) {
+        productPayload.product.template_suffix = 'heavy-products';
+        console.log(`Product ${firstVariant.handle} is over 50lbs, assigning 'heavy-products' template.`);
     }
 
     console.log('Phase 1: Creating product with REST payload:', JSON.stringify(productPayload, null, 2));
@@ -826,12 +834,14 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                         vendor
                         productType
                         bodyHtml
+                        templateSuffix
                         variants {
                             edges {
                                 node {
                                     id
                                     sku
                                     price
+                                    weight
                                     inventoryQuantity
                                     inventoryItem {
                                         id
@@ -971,7 +981,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     compareAtPrice: null,
                     costPerItem: null,
                     barcode: null,
-                    weight: null,
+                    weight: shopifyProduct.weight, // weight in grams
                     mediaUrl: null, // Note: Bulk export doesn't easily link variant images
                     imageId: shopifyProduct.image?.id ? parseInt(shopifyProduct.image.id.split('/').pop(), 10) : null,
                     category: null,
@@ -981,6 +991,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     option2Value: null,
                     option3Name: null,
                     option3Value: null,
+                    templateSuffix: parentProduct.templateSuffix
                 });
             }
         }
