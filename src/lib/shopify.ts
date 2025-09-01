@@ -211,11 +211,12 @@ function getShopifyRestClient() {
 // --- Data Fetching Functions ---
 
 export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]> {
-    console.log(`Starting to fetch ${skus.length} products from Shopify by SKU using exact match.`);
+    console.log(`Starting to fetch ${skus.length} products from Shopify by SKU.`);
     const shopifyClient = getShopifyGraphQLClient();
 
-    const products: Product[] = [];
+    const allProducts: Product[] = [];
     const skuBatches: string[][] = [];
+    const requestedSkuSet = new Set(skus);
 
     // Reduce batch size to avoid hitting query complexity limits
     for (let i = 0; i < skus.length; i += 40) {
@@ -224,10 +225,10 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 
     console.log(`Processing ${skuBatches.length} batches of SKUs.`);
 
-    let processedSkus = 0;
+    let processedSkusCount = 0;
     for (const batch of skuBatches) {
-        // Wrap each SKU in quotes for an exact match
-        const query = batch.map(sku => `sku:"${sku}"`).join(' OR ');
+        // The query remains broad to fetch potential matches.
+        const query = batch.map(sku => `sku:${sku}`).join(' OR ');
         
         try {
             await sleep(500); // Rate limiting
@@ -235,19 +236,15 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
             const response: any = await shopifyClient.query({
                 data: {
                     query: GET_PRODUCTS_BY_SKU_QUERY,
-                    variables: {
-                        query: query,
-                    }
+                    variables: { query },
                 }
             });
             
             if (response.body.errors) {
               console.error('GraphQL Errors:', response.body.errors);
-              // Handle throttling specifically
               if (JSON.stringify(response.body.errors).includes('Throttled')) {
                  console.log("Throttled by Shopify, waiting 5 seconds before retrying...");
                  await sleep(5000);
-                 // Optionally, you could retry the same batch here
               }
             }
 
@@ -257,38 +254,41 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                 for (const variantEdge of productEdge.node.variants.edges) {
                     const variant = variantEdge.node;
                      if(variant && variant.sku) {
-                        products.push({
-                            id: productEdge.node.id,
-                            variantId: variant.id,
-                            inventoryItemId: variant.inventoryItem?.id,
-                            handle: productEdge.node.handle,
-                            sku: variant.sku,
-                            name: productEdge.node.title,
-                            price: parseFloat(variant.price),
-                            inventory: variant.inventoryQuantity,
-                            descriptionHtml: productEdge.node.bodyHtml,
-                            productType: null, // Will be derived from tags in CSV
-                            vendor: null, // From CSV
-                            tags: null, // From CSV
-                            compareAtPrice: null, // From CSV
-                            costPerItem: null, // From CSV
-                            barcode: null, // From CSV
-                            weight: null, // From CSV
-                            mediaUrl: productEdge.node.featuredImage?.url || null, // From CSV for variant matching
-                            imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
-                            category: null, // From CSV
-                            option1Name: null,
-                            option1Value: null,
-                            option2Name: null,
-                            option2Value: null,
-                            option3Name: null,
-                            option3Value: null,
-                        });
+                        // **CRITICAL FIX**: Manually filter for exact SKU match here.
+                        if (requestedSkuSet.has(variant.sku)) {
+                            allProducts.push({
+                                id: productEdge.node.id,
+                                variantId: variant.id,
+                                inventoryItemId: variant.inventoryItem?.id,
+                                handle: productEdge.node.handle,
+                                sku: variant.sku,
+                                name: productEdge.node.title,
+                                price: parseFloat(variant.price),
+                                inventory: variant.inventoryQuantity,
+                                descriptionHtml: productEdge.node.bodyHtml,
+                                productType: null,
+                                vendor: null,
+                                tags: null,
+                                compareAtPrice: null,
+                                costPerItem: null,
+                                barcode: null,
+                                weight: null,
+                                mediaUrl: productEdge.node.featuredImage?.url || null,
+                                imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
+                                category: null,
+                                option1Name: null,
+                                option1Value: null,
+                                option2Name: null,
+                                option2Value: null,
+                                option3Name: null,
+                                option3Value: null,
+                            });
+                        }
                     }
                 }
             }
-            processedSkus += batch.length;
-            console.log(`Processed ${processedSkus}/${skus.length} SKUs, found ${products.length} products so far.`);
+            processedSkusCount += batch.length;
+            console.log(`Processed ${processedSkusCount}/${skus.length} SKUs, found ${allProducts.length} exact matches so far.`);
 
         } catch (error) {
             console.error("Error during Shopify product fetch loop:", error);
@@ -296,14 +296,13 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                 console.log("Caught throttled error, waiting 5 seconds before retrying...");
                 await sleep(5000);
             } else {
-               // For other errors, log and continue to the next batch
                console.error("An unexpected error occurred while fetching a batch. Skipping to next.", error);
             }
         }
     }
     
-    console.log(`Finished fetching all Shopify products. Total found: ${products.length}`);
-    return products;
+    console.log(`Finished fetching all Shopify products. Total exact matches found: ${allProducts.length}`);
+    return allProducts;
 }
 
 export async function getShopifyLocations(): Promise<{id: number; name: string}[]> {
