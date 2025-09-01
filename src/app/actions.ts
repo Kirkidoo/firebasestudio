@@ -368,14 +368,18 @@ export async function checkBulkCacheStatus(): Promise<{ lastModified: string | n
 export async function runBulkAudit(
     csvFileName: string, 
     ftpData: FormData,
-    useCache: boolean
+    useCache: boolean,
+    onProgress: (message: string) => void
 ): Promise<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] }> {
     let csvProducts: Product[] = [];
-
+    
+    onProgress('Downloading CSV file from FTP...');
     try {
         const readableStream = await getCsvStreamFromFtp(csvFileName, ftpData);
+        onProgress('Parsing CSV file...');
         const parsedData = await parseCsvFromStream(readableStream);
         csvProducts = parsedData.products;
+        onProgress(`Found ${csvProducts.length} products in CSV.`);
     } catch (error) {
         console.error("Failed to download or parse CSV from FTP", error);
         throw new Error(`Could not download or process file '${csvFileName}' from FTP.`);
@@ -388,7 +392,7 @@ export async function runBulkAudit(
     let shopifyProducts: Product[];
 
     if (useCache) {
-        console.log('Using cached Shopify data...');
+        onProgress('Using cached Shopify data...');
         try {
             const fileContent = await fs.readFile(CACHE_FILE_PATH, 'utf-8');
             shopifyProducts = await parseBulkOperationResult(fileContent);
@@ -397,38 +401,40 @@ export async function runBulkAudit(
             throw new Error("Could not read the cache file. Please start a new bulk operation.");
         }
     } else {
-        console.log('Requesting product export from Shopify. This may take several minutes...');
+        onProgress('Requesting new product export from Shopify...');
         const operation = await startProductExportBulkOperation();
-        console.log(`Bulk operation started: ${operation.id}`);
+        onProgress(`Bulk operation started: ${operation.id}`);
 
         let operationStatus = operation;
         while(operationStatus.status === 'RUNNING' || operationStatus.status === 'CREATED') {
-            console.log(`Waiting for Shopify to prepare data... (Status: ${operationStatus.status})`);
+            onProgress(`Waiting for Shopify... (Status: ${operationStatus.status})`);
             await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5 seconds
             operationStatus = await checkBulkOperationStatus(operation.id);
-            console.log(`Polling bulk operation status: ${operationStatus.status}`);
         }
 
         if (operationStatus.status !== 'COMPLETED') {
             throw new Error(`Shopify bulk operation failed or was cancelled. Status: ${operationStatus.status}`);
         }
         
+        onProgress('Shopify export completed.');
+
         if(!operationStatus.resultUrl) {
             throw new Error(`Shopify bulk operation completed, but did not provide a result URL.`);
         }
 
-        console.log('Downloading and processing exported data from Shopify...');
+        onProgress('Downloading exported data from Shopify...');
         const resultJsonl = await getBulkOperationResult(operationStatus.resultUrl);
         
-        console.log('Caching Shopify data...');
+        onProgress('Caching Shopify data...');
         await ensureCacheDirExists();
         await fs.writeFile(CACHE_FILE_PATH, resultJsonl);
         await fs.writeFile(CACHE_INFO_PATH, JSON.stringify({ lastModified: new Date().toISOString() }));
         
+        onProgress('Parsing exported data...');
         shopifyProducts = await parseBulkOperationResult(resultJsonl);
     }
     
-    console.log('Generating audit report...');
+    onProgress('Generating audit report...');
     const { report, summary } = await runAuditComparison(csvProducts, shopifyProducts);
 
     // Format for legacy card, can be removed if card is updated.
@@ -436,6 +442,7 @@ export async function runBulkAudit(
         .filter(d => d.status === 'duplicate_in_shopify')
         .map(d => ({ sku: d.sku, count: d.shopifyProducts.length }));
         
+    onProgress('Report finished!');
     return { report, summary, duplicates: duplicatesForCard };
 }
 
@@ -781,5 +788,7 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
       
+
+    
 
     

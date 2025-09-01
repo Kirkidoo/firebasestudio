@@ -1,11 +1,11 @@
 
 'use client';
 
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Frown, Loader2, LogIn, Server, FileText, Database } from 'lucide-react';
+import { Frown, Loader2, LogIn, Server, FileText, Database, Check, Clock } from 'lucide-react';
 
 import { connectToFtp, listCsvFiles, runAudit, runBulkAudit, checkBulkCacheStatus } from '@/app/actions';
 import { AuditResult, DuplicateSku } from '@/lib/types';
@@ -39,7 +39,7 @@ const BULK_AUDIT_FILE = 'ShopifyProductImport.csv';
 
 export default function AuditStepper() {
   const [step, setStep] = useState<Step>('connect');
-  const [progressMessage, setProgressMessage] = useState('');
+  const [activityLog, setActivityLog] = useState<string[]>([]);
   const [csvFiles, setCsvFiles] = useState<string[]>([]);
   const [selectedCsv, setSelectedCsv] = useState<string>('');
   const [auditData, setAuditData] = useState<{ report: AuditResult[], summary: any, duplicates: DuplicateSku[] } | null>(null);
@@ -83,6 +83,10 @@ export default function AuditStepper() {
       // Reset cache check when selection changes
       setCacheStatus(null);
   }
+  
+  const handleProgressCallback = useCallback((message: string) => {
+      setActivityLog(prev => [...prev, message]);
+  }, []);
 
   const handleRunAudit = (useCache = false) => {
     if (!selectedCsv) {
@@ -90,6 +94,7 @@ export default function AuditStepper() {
         return;
     }
     setStep('auditing');
+    setActivityLog([]);
     
     const isBulk = selectedCsv === BULK_AUDIT_FILE;
     
@@ -103,15 +108,13 @@ export default function AuditStepper() {
         
         let result;
         if (isBulk) {
-            setProgressMessage(useCache ? 'Generating report from cache...' : 'Starting bulk operation... This can take several minutes.');
-            result = await runBulkAudit(selectedCsv, ftpData, useCache);
+            result = await runBulkAudit(selectedCsv, ftpData, useCache, handleProgressCallback);
         } else {
-            setProgressMessage('Processing file... This may take a moment for large files.');
+            handleProgressCallback('Processing file... This may take a moment for large files.');
             result = await runAudit(selectedCsv, ftpData);
         }
 
         setAuditData(result);
-        setProgressMessage('Report generated!');
         setTimeout(() => setStep('report'), 500);
       } catch (error) {
         const message = error instanceof Error ? error.message : "An unknown error occurred during the audit.";
@@ -135,7 +138,7 @@ export default function AuditStepper() {
   
   const handleReset = () => {
     setStep('connect');
-    setProgressMessage('');
+    setActivityLog([]);
     setCsvFiles([]);
     setSelectedCsv('');
     setAuditData(null);
@@ -309,15 +312,37 @@ export default function AuditStepper() {
   }
   
   if (step === 'auditing') {
+    const isBulk = selectedCsv === BULK_AUDIT_FILE;
     return (
-        <Card className="w-full max-w-md mx-auto">
+        <Card className="w-full max-w-lg mx-auto">
             <CardHeader>
                 <CardTitle>Processing File</CardTitle>
-                <CardDescription>Please wait while we process your file.</CardDescription>
+                <CardDescription>Please wait while we process your file. This may take several minutes.</CardDescription>
             </CardHeader>
-            <CardContent className="text-center space-y-4 pt-6">
-                <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-                <p className="text-sm text-muted-foreground font-medium">{progressMessage}</p>
+            <CardContent className="space-y-4 pt-6">
+                <div className="flex justify-center">
+                    <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+                </div>
+                {isBulk && (
+                    <div className="mt-4 p-4 border rounded-lg bg-muted/50 max-h-60 overflow-y-auto">
+                        <h3 className="font-semibold mb-2">Activity Log</h3>
+                        <ul className="space-y-2 text-sm text-muted-foreground">
+                            {activityLog.map((log, index) => {
+                                const isDone = activityLog.length > index + 1 || log.toLowerCase().includes('finished') || log.toLowerCase().includes('completed') || log.toLowerCase().includes('found');
+                                return (
+                                    <li key={index} className="flex items-start gap-3">
+                                        {isDone ? (
+                                            <Check className="h-4 w-4 mt-0.5 text-green-500 shrink-0" />
+                                        ) : (
+                                            <Clock className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+                                        )}
+                                        <span>{log}</span>
+                                    </li>
+                                )
+                            })}
+                        </ul>
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
@@ -346,3 +371,5 @@ export default function AuditStepper() {
 
   return null;
 }
+
+    

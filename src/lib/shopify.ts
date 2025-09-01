@@ -366,8 +366,8 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
 
         if (!isSingleDefaultVariant) {
             if (p.option1Name) variantPayload.option1 = getOptionValue(p.option1Value, p.sku);
-            if (p.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, p.sku);
-            if (p.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, p.sku);
+            if (p.option2Name) variantPayload.option2 = getOptionValue(p.option2Value, null);
+            if (p.option3Name) variantPayload.option3 = getOptionValue(p.option3Value, null);
         }
 
         return variantPayload;
@@ -786,6 +786,18 @@ export async function deleteProductImage(productId: number, imageId: number): Pr
 
 export async function startProductExportBulkOperation(): Promise<{ id: string, status: string }> {
     const shopifyClient = getShopifyGraphQLClient();
+    
+    // First, check if an operation is already running.
+    const currentOpResponse: any = await shopifyClient.query({
+        data: { query: GET_CURRENT_BULK_OPERATION_QUERY },
+    });
+    const currentOperation = currentOpResponse.body.data?.currentBulkOperation;
+    if (currentOperation && (currentOperation.status === 'RUNNING' || currentOperation.status === 'CREATED')) {
+        console.log(`Found existing bulk operation: ${currentOperation.id}. Recovering...`);
+        return { id: currentOperation.id, status: currentOperation.status };
+    }
+
+
     const query = `
         query {
             products {
@@ -967,5 +979,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
 
     
 
+
+    
 
     
