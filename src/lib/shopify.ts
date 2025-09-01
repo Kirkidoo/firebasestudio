@@ -226,6 +226,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 
     let processedSkus = 0;
     for (const batch of skuBatches) {
+        // Wrap each SKU in quotes for an exact match
         const query = batch.map(sku => `sku:"${sku}"`).join(' OR ');
         
         try {
