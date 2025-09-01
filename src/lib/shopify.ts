@@ -211,7 +211,7 @@ function getShopifyRestClient() {
 // --- Data Fetching Functions ---
 
 export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]> {
-    console.log(`Starting to fetch ${skus.length} products from Shopify by SKU.`);
+    console.log(`Starting to fetch ${skus.length} products from Shopify by SKU using exact match.`);
     const shopifyClient = getShopifyGraphQLClient();
 
     const products: Product[] = [];
