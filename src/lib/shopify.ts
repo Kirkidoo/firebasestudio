@@ -43,6 +43,7 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
                 inventoryQuantity
                 inventoryItem {
                     id
+                    weight
                 }
                 image {
                   id
@@ -218,7 +219,6 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     const skuBatches: string[][] = [];
     const requestedSkuSet = new Set(skus);
 
-    // Reduce batch size to avoid hitting query complexity limits
     for (let i = 0; i < skus.length; i += 40) {
         skuBatches.push(skus.slice(i, i + 40));
     }
@@ -227,7 +227,6 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 
     let processedSkusCount = 0;
     for (const batch of skuBatches) {
-        // The query remains broad to fetch potential matches.
         const query = batch.map(sku => `sku:"${sku}"`).join(' OR ');
         
         try {
@@ -253,38 +252,35 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
             for (const productEdge of productEdges) {
                 for (const variantEdge of productEdge.node.variants.edges) {
                     const variant = variantEdge.node;
-                     if(variant && variant.sku) {
-                        // **CRITICAL FIX**: Manually filter for exact SKU match here.
-                        if (requestedSkuSet.has(variant.sku)) {
-                            allProducts.push({
-                                id: productEdge.node.id,
-                                variantId: variant.id,
-                                inventoryItemId: variant.inventoryItem?.id,
-                                handle: productEdge.node.handle,
-                                sku: variant.sku,
-                                name: productEdge.node.title,
-                                price: parseFloat(variant.price),
-                                inventory: variant.inventoryQuantity,
-                                descriptionHtml: productEdge.node.bodyHtml,
-                                productType: null,
-                                vendor: null,
-                                tags: null,
-                                compareAtPrice: null,
-                                costPerItem: null,
-                                barcode: null,
-                                weight: null,
-                                mediaUrl: productEdge.node.featuredImage?.url || null,
-                                imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
-                                category: null,
-                                option1Name: null,
-                                option1Value: null,
-                                option2Name: null,
-                                option2Value: null,
-                                option3Name: null,
-                                option3Value: null,
-                                templateSuffix: null,
-                            });
-                        }
+                     if(variant && variant.sku && requestedSkuSet.has(variant.sku)) {
+                        allProducts.push({
+                            id: productEdge.node.id,
+                            variantId: variant.id,
+                            inventoryItemId: variant.inventoryItem?.id,
+                            handle: productEdge.node.handle,
+                            sku: variant.sku,
+                            name: productEdge.node.title,
+                            price: parseFloat(variant.price),
+                            inventory: variant.inventoryQuantity,
+                            descriptionHtml: productEdge.node.bodyHtml,
+                            productType: null,
+                            vendor: null,
+                            tags: null,
+                            compareAtPrice: null,
+                            costPerItem: null,
+                            barcode: null,
+                            weight: variant.inventoryItem?.weight || null,
+                            mediaUrl: productEdge.node.featuredImage?.url || null,
+                            imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
+                            category: null,
+                            option1Name: null,
+                            option1Value: null,
+                            option2Name: null,
+                            option2Value: null,
+                            option3Name: null,
+                            option3Value: null,
+                            templateSuffix: null,
+                        });
                     }
                 }
             }
@@ -341,7 +337,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
     const isSingleDefaultVariant = productVariants.length === 1 && 
         (firstVariant.option1Name === 'Title' && firstVariant.option1Value === 'Default Title');
 
-    const getOptionValue = (value: string | null | undefined, fallback: string) => (value?.trim() ? value.trim() : fallback);
+    const getOptionValue = (value: string | null | undefined, fallback: string | null) => (value?.trim() ? value.trim() : fallback);
 
     // --- Duplicate Variant Option Handling ---
     const processedVariants = [...productVariants]; // Create a mutable copy
@@ -465,7 +461,7 @@ export async function addProductVariant(product: Product): Promise<any> {
     }
     const productId = productGid.split('/').pop();
 
-    const getOptionValue = (value: string | null | undefined, fallback: string) => (value?.trim() ? value.trim() : fallback);
+    const getOptionValue = (value: string | null | undefined, fallback: string | null) => (value?.trim() ? value.trim() : fallback);
 
     const variantPayload: any = {
       variant: {
@@ -840,10 +836,10 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                                     id
                                     sku
                                     price
-                                    weight
                                     inventoryQuantity
                                     inventoryItem {
                                         id
+                                        weight
                                     }
                                     image {
                                       id
@@ -980,7 +976,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     compareAtPrice: null,
                     costPerItem: null,
                     barcode: null,
-                    weight: shopifyProduct.weight, // weight in grams
+                    weight: shopifyProduct.inventoryItem?.weight,
                     mediaUrl: null, // Note: Bulk export doesn't easily link variant images
                     imageId: shopifyProduct.image?.id ? parseInt(shopifyProduct.image.id.split('/').pop(), 10) : null,
                     category: null,
