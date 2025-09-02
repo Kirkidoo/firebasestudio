@@ -485,8 +485,10 @@ async function _fixSingleMismatch(
                 }
                 break;
             case 'heavy_product_template':
-                // This fix is not yet implemented
-                return { success: false, message: `Fix for heavy product template is not yet implemented.` };
+                if (fixPayload.id) {
+                    await updateProduct(fixPayload.id, { templateSuffix: 'heavy-products' });
+                }
+                break;
              case 'duplicate_in_shopify':
                 // This is a warning, cannot be fixed programmatically. Handled client-side.
                 return { success: true, message: `SKU ${csvProduct.sku} is a duplicate in Shopify, no server action taken.` };
@@ -670,9 +672,19 @@ export async function createMultipleInShopify(
                 missingType: 'product', // Bulk create is always for new products
             };
         }
-        acc[handle].allVariants = item.allVariants;
+        // Correctly accumulate all variants for the handle
+        acc[handle].allVariants.push(...item.allVariants.filter(v => v.handle === handle));
         return acc;
     }, {} as { [handle: string]: { product: Product; allVariants: Product[]; missingType: 'product' | 'variant' } });
+    
+    // De-duplicate variants within each handle group
+    for (const handle in groupedByHandle) {
+        const uniqueVariantsMap = new Map<string, Product>();
+        groupedByHandle[handle].allVariants.forEach(variant => {
+            uniqueVariantsMap.set(variant.sku, variant);
+        });
+        groupedByHandle[handle].allVariants = Array.from(uniqueVariantsMap.values());
+    }
 
 
     for (const handle in groupedByHandle) {
