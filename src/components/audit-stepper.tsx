@@ -130,7 +130,7 @@ export default function AuditStepper() {
             }
 
         } catch(error) {
-            const message = error instanceof Error ? error.message : "An unknown error occurred during the audit.";
+            const message = error instanceof Error ? error.message : "An unexpected response was received from the server during the audit.";
             setErrorMessage(message);
             setStep('error');
         }
@@ -197,7 +197,7 @@ export default function AuditStepper() {
             }
 
         } catch(error) {
-            const message = error instanceof Error ? error.message : "An unknown error occurred during the audit.";
+            const message = error instanceof Error ? error.message : "An unexpected response was received during the audit.";
             setErrorMessage(message);
             setStep('error');
         }
