@@ -41,9 +41,9 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
                 sku
                 price
                 inventoryQuantity
+                weight
                 inventoryItem {
                     id
-                    weight
                 }
                 image {
                   id
@@ -216,9 +216,9 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     const shopifyClient = getShopifyGraphQLClient();
 
     const allProducts: Product[] = [];
-    const skuBatches: string[][] = [];
     const requestedSkuSet = new Set(skus);
-
+    
+    const skuBatches: string[][] = [];
     for (let i = 0; i < skus.length; i += 40) {
         skuBatches.push(skus.slice(i, i + 40));
     }
@@ -227,7 +227,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
 
     let processedSkusCount = 0;
     for (const batch of skuBatches) {
-        const query = batch.map(sku => `sku:"${sku}"`).join(' OR ');
+        const query = batch.map(sku => `sku:${sku}`).join(' OR '); // Use non-quoted SKU for broader match
         
         try {
             await sleep(500); // Rate limiting
@@ -252,7 +252,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
             for (const productEdge of productEdges) {
                 for (const variantEdge of productEdge.node.variants.edges) {
                     const variant = variantEdge.node;
-                     if(variant && variant.sku && requestedSkuSet.has(variant.sku)) {
+                     if(variant && variant.sku) {
                         allProducts.push({
                             id: productEdge.node.id,
                             variantId: variant.id,
@@ -269,7 +269,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                             compareAtPrice: null,
                             costPerItem: null,
                             barcode: null,
-                            weight: variant.inventoryItem?.weight || null,
+                            weight: variant.weight || null,
                             mediaUrl: productEdge.node.featuredImage?.url || null,
                             imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
                             category: null,
@@ -285,7 +285,6 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                 }
             }
             processedSkusCount += batch.length;
-            console.log(`Processed ${processedSkusCount}/${skus.length} SKUs, found ${allProducts.length} exact matches so far.`);
 
         } catch (error) {
             console.error("Error during Shopify product fetch loop:", error);
@@ -298,8 +297,11 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
         }
     }
     
-    console.log(`Finished fetching all Shopify products. Total exact matches found: ${allProducts.length}`);
-    return allProducts;
+    // Post-fetch filtering for exact SKU match
+    const exactMatchProducts = allProducts.filter(p => requestedSkuSet.has(p.sku));
+    
+    console.log(`Finished fetching. Found ${allProducts.length} potential matches, ${exactMatchProducts.length} exact matches.`);
+    return exactMatchProducts;
 }
 
 export async function getShopifyLocations(): Promise<{id: number; name: string}[]> {
@@ -345,7 +347,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
 
     for (const variant of processedVariants) {
         const optionKey = [variant.option1Value, variant.option2Value, variant.option3Value].filter(Boolean).join('/');
-        if (seenOptionValues.has(optionKey)) {
+        if (seenOptionValues.has(optionKey) && optionKey !== "") {
             console.log(`Duplicate option values found for "${optionKey}". Uniquifying with SKU.`);
             // Uniquify by appending SKU. This logic assumes Option1 is the primary one being duplicated.
             if (variant.option1Value) {
@@ -387,7 +389,7 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
         return variantPayload;
     });
 
-    const uniqueImageUrls = [...new Set(processedVariants.map(p => p.mediaUrl).filter(Boolean))];
+    const uniqueImageUrls = [...new Set(processedVariants.map(p => p.mediaUrl).filter(Boolean) as string[])];
     const restImages = uniqueImageUrls.map(url => ({ src: url }));
 
     const tags = addClearanceTag ? 'Clearance' : '';
@@ -837,9 +839,9 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                                     sku
                                     price
                                     inventoryQuantity
+                                    weight
                                     inventoryItem {
                                         id
-                                        weight
                                     }
                                     image {
                                       id
@@ -976,7 +978,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     compareAtPrice: null,
                     costPerItem: null,
                     barcode: null,
-                    weight: shopifyProduct.inventoryItem?.weight,
+                    weight: shopifyProduct.weight,
                     mediaUrl: null, // Note: Bulk export doesn't easily link variant images
                     imageId: shopifyProduct.image?.id ? parseInt(shopifyProduct.image.id.split('/').pop(), 10) : null,
                     category: null,
