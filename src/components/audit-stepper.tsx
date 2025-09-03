@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useTransition, useEffect, useCallback } from 'react';
@@ -121,7 +122,7 @@ export default function AuditStepper() {
             addLog(`Downloading and parsing ${selectedCsv}...`);
             const result = await runAudit(selectedCsv, ftpData);
             
-            if (result && result.report && result.summary && typeof result.duplicates !== 'undefined') {
+            if (result && typeof result.report !== 'undefined' && typeof result.summary !== 'undefined' && typeof result.duplicates !== 'undefined') {
                 addLog('Audit complete!');
                 setAuditData(result);
                 setTimeout(() => setStep('report'), 500);
@@ -151,14 +152,23 @@ export default function AuditStepper() {
 
             addLog('Downloading CSV file from FTP...');
             const csvProducts = await getCsvProducts(selectedCsv, ftpData);
+            if (!csvProducts) {
+                throw new Error('Could not retrieve products from CSV file.');
+            }
             addLog(`Found ${csvProducts.length} products in CSV.`);
             
-            let shopifyProducts: Product[];
+            let shopifyProducts: Product[] | null = [];
 
             if (useCache) {
                 addLog('Using cached Shopify data...');
                 shopifyProducts = await getShopifyProductsFromCache();
-            } else {
+                 if (!shopifyProducts) {
+                    addLog('Cache miss or error. Fetching fresh data...');
+                    useCache = false; // Force fetch
+                }
+            }
+            
+            if (!useCache) {
                 addLog('Requesting new product export from Shopify...');
                 let operation = await startBulkOperation();
                 addLog(`Bulk operation started: ${operation.id}`);
@@ -184,11 +194,15 @@ export default function AuditStepper() {
                 addLog('Caching complete.');
             }
             
+            if (!shopifyProducts) {
+                 throw new Error('Could not retrieve products from Shopify.');
+            }
+            
             addLog(`Found ${shopifyProducts.length} products in Shopify.`);
             addLog('Generating audit report...');
             const result = await runBulkAuditComparison(csvProducts, shopifyProducts);
             
-            if (result && result.report && result.summary && typeof result.duplicates !== 'undefined') {
+            if (result && typeof result.report !== 'undefined' && typeof result.summary !== 'undefined' && typeof result.duplicates !== 'undefined') {
                 addLog('Report finished!');
                 setAuditData(result);
                 setTimeout(() => setStep('report'), 500);

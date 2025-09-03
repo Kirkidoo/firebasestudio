@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useTransition, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -190,7 +191,7 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
 
 const HANDLES_PER_PAGE = 20;
 
-const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag'];
+const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag', 'weight'];
 
 export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: any, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
@@ -574,6 +575,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             heavy_product_template: <FileWarning className="h-4 w-4" />,
             duplicate_in_shopify: <Copy className="h-4 w-4" />,
             missing_in_shopify: <XCircle className="h-4 w-4" />,
+            weight: <Weight className="h-4 w-4" />,
         };
 
         return (
@@ -721,14 +723,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       isSomeOnPageSelected: selectedOnPageCount > 0 && selectedOnPageCount < paginatedHandleKeys.length,
     };
   }, [paginatedHandleKeys, selectedHandles]);
-
-  useEffect(() => {
-    const checkbox = selectAllCheckboxRef.current;
-    if (checkbox) {
-        checkbox.setAttribute('data-state', isAllOnPageSelected ? 'checked' : (isSomeOnPageSelected ? 'indeterminate' : 'unchecked'));
-    }
-  }, [isAllOnPageSelected, isSomeOnPageSelected]);
-
 
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
@@ -1230,11 +1224,11 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         {(filter === 'mismatched' || filter === 'missing_in_shopify') && paginatedHandleKeys.length > 0 && (
           <div className="flex items-center border-t border-b px-4 py-2 bg-muted/50">
             <Checkbox
-              ref={selectAllCheckboxRef}
               id="select-all-page"
               checked={isAllOnPageSelected}
               onCheckedChange={(checked) => handleSelectAllOnPage(!!checked)}
               aria-label="Select all items on this page"
+              data-state={isAllOnPageSelected ? 'checked' : (isSomeOnPageSelected ? 'indeterminate' : 'unchecked')}
             />
             <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
               Select all on this page ({paginatedHandleKeys.length} items)
