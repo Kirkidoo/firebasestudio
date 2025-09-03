@@ -204,6 +204,12 @@ function findMismatches(csvProduct: Product, shopifyProduct: Product): MismatchD
             mismatches.push({ field: 'inventory', csvValue: csvProduct.inventory, shopifyValue: shopifyProduct.inventory });
         }
     }
+    
+    // Check for missing weight
+    if (csvProduct.weight !== null && (shopifyProduct.weight === null || shopifyProduct.weight === 0)) {
+        mismatches.push({ field: 'weight', csvValue: `${(csvProduct.weight / 453.592).toFixed(2)} lbs`, shopifyValue: 'Missing' });
+    }
+
 
     if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
         mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
@@ -487,6 +493,14 @@ async function _fixSingleMismatch(
             case 'inventory':
                  if (fixPayload.inventoryItemId && fixPayload.inventory !== null) {
                     await updateInventoryLevel(fixPayload.inventoryItemId, fixPayload.inventory, GAMMA_WAREhouse_LOCATION_ID);
+                }
+                break;
+            case 'weight':
+                 if (fixPayload.variantId && fixPayload.weight !== null) {
+                    const numericVariantId = parseInt(fixPayload.variantId.split('/').pop() || '0', 10);
+                     if (numericVariantId) {
+                       await updateProductVariant(numericVariantId, { weight: fixPayload.weight, weight_unit: 'g' });
+                    }
                 }
                 break;
             case 'h1_tag':
@@ -846,6 +860,8 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
       
+
+    
 
     
 
