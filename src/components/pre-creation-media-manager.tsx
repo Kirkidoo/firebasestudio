@@ -14,6 +14,7 @@ import { Product } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
+import { cn } from '@/lib/utils';
 
 interface PreCreationMediaManagerProps {
     variants: Product[];
@@ -273,35 +274,41 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                        {imageUrls.map((url, i) => (
-                             <div key={url} className="relative group border rounded-md overflow-hidden">
-                                <Label htmlFor={`pre-image-select-${i}`} className="cursor-pointer">
-                                    <Image
-                                        src={url}
-                                        alt={`Product image`}
-                                        width={150}
-                                        height={150}
-                                        className="object-cover w-full aspect-square"
-                                    />
-                                </Label>
-                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-between p-1.5 pointer-events-none">
-                                    <Checkbox
-                                        id={`pre-image-select-${i}`}
-                                        className="bg-white/80 data-[state=checked]:bg-primary pointer-events-auto"
-                                        checked={selectedImageUrls.has(url)}
-                                        onCheckedChange={(checked) => handleImageSelection(url, !!checked)}
-                                    />
-                                   <a href={url} target="_blank" rel="noopener noreferrer" className="h-6 w-6 inline-flex items-center justify-center rounded-md bg-secondary/80 text-secondary-foreground hover:bg-secondary pointer-events-auto">
-                                      <Link className="h-3.5 w-3.5" />
-                                   </a>
-                                </div>
-                                {assignedUrls.has(url) && (
-                                     <div className="absolute top-1.5 right-1.5 h-6 w-6 inline-flex items-center justify-center rounded-full bg-secondary/80 text-secondary-foreground pointer-events-auto group-hover:hidden">
-                                        <Link className="h-3.5 w-3.5" />
+                        {imageUrls.map((url, i) => {
+                             const isSelected = selectedImageUrls.has(url);
+                             return (
+                                 <div key={url} className="relative group border rounded-md overflow-hidden">
+                                    <Label htmlFor={`pre-image-select-${i}`} className="cursor-pointer">
+                                        <Image
+                                            src={url}
+                                            alt={`Product image`}
+                                            width={150}
+                                            height={150}
+                                            className="object-cover w-full aspect-square"
+                                        />
+                                    </Label>
+                                    <div className={cn(
+                                        "absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-between p-1.5 pointer-events-none",
+                                        isSelected && "opacity-100"
+                                    )}>
+                                        <Checkbox
+                                            id={`pre-image-select-${i}`}
+                                            className="bg-white/80 data-[state=checked]:bg-primary pointer-events-auto"
+                                            checked={isSelected}
+                                            onCheckedChange={(checked) => handleImageSelection(url, !!checked)}
+                                        />
+                                       <a href={url} target="_blank" rel="noopener noreferrer" className="h-6 w-6 inline-flex items-center justify-center rounded-md bg-secondary/80 text-secondary-foreground hover:bg-secondary pointer-events-auto">
+                                          <Link className="h-3.5 w-3.5" />
+                                       </a>
                                     </div>
-                                )}
-                            </div>
-                        ))}
+                                    {assignedUrls.has(url) && (
+                                         <div className="absolute top-1.5 right-1.5 h-6 w-6 inline-flex items-center justify-center rounded-full bg-secondary/80 text-secondary-foreground pointer-events-auto group-hover:hidden">
+                                            <Link className="h-3.5 w-3.5" />
+                                        </div>
+                                    )}
+                                </div>
+                             )
+                        })}
                     </div>
                      <div className="p-4 border rounded-md mt-auto bg-muted/20 sticky bottom-0">
                         <Label htmlFor="new-image-url" className="text-base font-medium">Add New Image from URL</Label>

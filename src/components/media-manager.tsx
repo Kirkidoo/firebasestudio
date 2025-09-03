@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { cn } from '@/lib/utils';
 
 interface MediaManagerProps {
     productId: string;
@@ -63,7 +64,7 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
         if (!isLoading) {
             onImageCountChange(images.length);
         }
-    }, [images, isLoading]);
+    }, [images, isLoading, onImageCountChange]);
 
 
     const handleImageSelection = (imageId: number, checked: boolean) => {
@@ -383,6 +384,7 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                             {images.map(image => {
                                 const isAssigned = image.variant_ids && image.variant_ids.length > 0;
+                                const isSelected = selectedImageIds.has(image.id);
                                 return (
                                     <div key={image.id} className="relative group border rounded-md overflow-hidden">
                                         <Label htmlFor={`image-select-${image.id}`} className="cursor-pointer">
@@ -394,11 +396,14 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
                                                 className="object-cover w-full aspect-square"
                                             />
                                         </Label>
-                                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-between p-1.5 pointer-events-none">
+                                        <div className={cn(
+                                            "absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-between p-1.5 pointer-events-none",
+                                            isSelected && "opacity-100"
+                                        )}>
                                              <Checkbox
                                                 id={`image-select-${image.id}`}
                                                 className="bg-white/80 data-[state=checked]:bg-primary pointer-events-auto"
-                                                checked={selectedImageIds.has(image.id)}
+                                                checked={isSelected}
                                                 onCheckedChange={(checked) => handleImageSelection(image.id, !!checked)}
                                             />
                                              <AlertDialog>
@@ -420,7 +425,7 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
                                                 </AlertDialogContent>
                                             </AlertDialog>
                                         </div>
-                                         {isAssigned && (
+                                        {isAssigned && (
                                             <TooltipProvider>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
