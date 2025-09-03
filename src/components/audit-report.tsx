@@ -41,7 +41,9 @@ const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled, sku }: { 
     return (
         <div className="flex flex-col gap-2 mt-2">
             {mismatches.map((mismatch, index) => {
-                const canBeFixed = mismatch.field !== 'duplicate_in_shopify';
+                const canBeFixed = mismatch.field !== 'duplicate_in_shopify' && mismatch.field !== 'heavy_product_flag';
+                const isWarningOnly = mismatch.field === 'heavy_product_flag';
+
                 return (
                      <div key={`${sku}-${mismatch.field}-${index}`} className="flex items-center gap-2 text-xs p-2 rounded-md bg-yellow-50 dark:bg-yellow-900/20">
                          <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
@@ -53,36 +55,36 @@ const MismatchDetails = ({ mismatches, onFix, onMarkAsFixed, disabled, sku }: { 
                             {mismatch.field === 'duplicate_in_shopify' && (
                                 <span className="text-muted-foreground">SKU exists multiple times in Shopify.</span>
                             )}
-                             {mismatch.field === 'weight' && (
-                                <span className="text-muted-foreground">Weight is missing in Shopify.</span>
+                             {mismatch.field === 'heavy_product_flag' && (
+                                <span className="text-muted-foreground">Product is over 50lbs ({mismatch.csvValue}).</span>
                             )}
-                            {mismatch.field !== 'h1_tag' && mismatch.field !== 'duplicate_in_shopify' && mismatch.field !== 'weight' && (
+                            {mismatch.field !== 'h1_tag' && mismatch.field !== 'duplicate_in_shopify' && mismatch.field !== 'heavy_product_flag' && (
                                  <>
                                     <span className="text-red-500 line-through mr-2">{mismatch.shopifyValue ?? 'N/A'}</span>
                                     <span className="text-green-500">{mismatch.csvValue ?? 'N/A'}</span>
                                 </>
                             )}
                         </div>
-                         {canBeFixed && (
-                             <div className="flex items-center gap-1">
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onMarkAsFixed(mismatch.field)} disabled={disabled}>
-                                                <Check className="h-4 w-4" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            <p>Mark as fixed</p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                         <div className="flex items-center gap-1">
+                            <TooltipProvider>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onMarkAsFixed(mismatch.field)} disabled={disabled}>
+                                            <Check className="h-4 w-4" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Mark as fixed (hide from report)</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            </TooltipProvider>
+                            {canBeFixed && (
                                 <Button size="sm" variant="ghost" className="h-7" onClick={() => onFix(mismatch.field)} disabled={disabled}>
                                     <Wrench className="mr-1.5 h-3.5 w-3.5" />
                                     Fix
                                 </Button>
-                             </div>
-                         )}
+                            )}
+                         </div>
                     </div>
                 )
             })}
@@ -108,7 +110,7 @@ const MissingProductDetailsDialog = ({ product }: { product: Product }) => {
         { label: "Variant Compare At Price", value: product.compareAtPrice ? `$${product.compareAtPrice.toFixed(2)}` : 'N/A', notes: "From 'Compare At Price' column" },
         { label: "Variant Cost", value: product.costPerItem ? `$${product.costPerItem.toFixed(2) ?? 'N/A'}` : 'N/A', notes: "From 'Cost Per Item' column" },
         { label: "Variant Barcode (GTIN)", value: product.barcode || 'N/A', notes: "From 'Variant Barcode' column" },
-        { label: "Variant Weight", value: product.weight ? `${(product.weight / 453.592).toFixed(2)} lbs` : 'N/A', notes: "From 'Variant Grams' column. Will be stored in Shopify as pounds." },
+        { label: "Variant Weight", value: product.weight ? `${(product.weight / 453.592).toFixed(2)} lbs` : 'N/A', notes: "From 'Variant Grams' column" },
         { label: "Variant Inventory", value: product.inventory, notes: "From 'Variant Inventory Qty'. Will be set at 'Gamma Warehouse' location." },
 
         // Options
@@ -188,7 +190,7 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
 
 const HANDLES_PER_PAGE = 20;
 
-const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'weight', 'heavy_product_template'];
+const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag'];
 
 export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: any, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
@@ -240,16 +242,25 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             const remainingMismatches = item.mismatches.filter(m => !fixedMismatches.has(`${item.sku}-${m.field}`));
             return { ...item, mismatches: remainingMismatches };
         }
+        if (item.status === 'missing_in_shopify') {
+             const remainingMismatches = item.mismatches.filter(m => !fixedMismatches.has(`${item.sku}-${m.field}`));
+             if (createdProductHandles.has(getHandle(item))) {
+                 return { ...item, mismatches: [] }; // Effectively hide it
+             }
+             return { ...item, mismatches: remainingMismatches };
+        }
         return item;
     }).filter(item => {
         if (item.status === 'mismatched' && item.mismatches.length === 0) {
             return false;
         }
-        if (item.status === 'missing_in_shopify') {
-            const handle = getHandle(item);
-            if (createdProductHandles.has(handle)) {
-                return false;
-            }
+        if (item.status === 'missing_in_shopify' && item.mismatches.length === 1 && item.mismatches[0].field === 'missing_in_shopify') {
+            // This is a "missing" product that has had its other warnings (like heavy_product) hidden.
+            // If the handle has been created, we hide it completely.
+             return !createdProductHandles.has(getHandle(item));
+        }
+         if (item.status === 'missing_in_shopify' && item.mismatches.length === 0) {
+            return false;
         }
         return true;
     });
@@ -558,7 +569,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             name: <Text className="h-4 w-4" />,
             price: <DollarSign className="h-4 w-4" />,
             inventory: <List className="h-4 w-4" />,
-            weight: <Weight className="h-4 w-4" />,
+            heavy_product_flag: <Weight className="h-4 w-4" />,
             h1_tag: <span className="text-xs font-bold leading-none">H1</span>,
             heavy_product_template: <FileWarning className="h-4 w-4" />,
             duplicate_in_shopify: <Copy className="h-4 w-4" />,
@@ -639,7 +650,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const handleMarkAsFixed = (sku: string, field: MismatchDetail['field']) => {
     markMismatchAsFixed(sku, field);
     setFixedMismatches(prev => new Set(prev).add(`${sku}-${field}`));
-    toast({ title: 'Mismatch hidden', description: 'This mismatch will be hidden until you clear remembered fixes or run a new non-cached audit.' });
+    toast({ title: 'Item hidden', description: 'This item will be hidden until you clear remembered fixes or run a new non-cached audit.' });
   };
   
   const handleMarkAsCreated = (handle: string) => {
@@ -777,7 +788,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         {items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) && (
                             <Button size="sm" onClick={(e) => { e.stopPropagation(); handleBulkFix(items.filter(i => i.status === 'mismatched'))}} disabled={isFixing}>
                                 <Bot className="mr-2 h-4 w-4" />
-                                Fix All ({items.flatMap(i => i.mismatches).filter(m => m.field !== 'duplicate_in_shopify').length})
+                                Fix All ({items.flatMap(i => i.mismatches).filter(m => m.field !== 'duplicate_in_shopify' && m.field !== 'heavy_product_flag').length})
                             </Button>
                         )}
                          {isMissing && items[0].mismatches[0]?.missingType === 'product' && (
@@ -847,6 +858,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                 const productForDetails = item.csvProducts[0] || item.shopifyProducts[0];
                                 
                                 if (item.status === 'mismatched' && item.mismatches.length === 0) return null;
+                                if (item.status === 'missing_in_shopify' && item.mismatches.every(m => m.field !== 'missing_in_shopify')) return null;
 
                                 return (
                                     <TableRow key={item.sku} className={
@@ -872,12 +884,13 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                                         disabled={isFixing}
                                                     />
                                                 }
-                                                {item.status === 'missing_in_shopify' && item.csvProducts[0] && (
+                                                {item.status === 'missing_in_shopify' && (
                                                     <p className="text-sm text-muted-foreground">
                                                         This SKU is a{' '}
                                                         <span className="font-semibold text-foreground">
-                                                            {item.mismatches[0]?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
+                                                            {item.mismatches.find(m => m.field === 'missing_in_shopify')?.missingType === 'product' ? 'Missing Product' : 'Missing Variant'}
                                                         </span>.
+                                                         {item.mismatches.some(m => m.field === 'heavy_product_flag') && <span className="block mt-1"> <AlertTriangle className="inline-block h-4 w-4 mr-1 text-yellow-500" /> This is a heavy product.</span>}
                                                     </p>
                                                 )}
                                                 {item.status === 'not_in_csv' && <p className="text-sm text-muted-foreground">This product exists in Shopify but not in your CSV file.</p>}

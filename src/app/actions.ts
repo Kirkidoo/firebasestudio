@@ -197,9 +197,6 @@ function findMismatches(csvProduct: Product, shopifyProduct: Product): MismatchD
     if (csvProduct.price !== shopifyProduct.price) {
         mismatches.push({ field: 'price', csvValue: csvProduct.price, shopifyValue: shopifyProduct.price });
     }
-     if (csvProduct.weight && (!shopifyProduct.weight || shopifyProduct.weight === 0)) {
-        mismatches.push({ field: 'weight', csvValue: csvProduct.weight, shopifyValue: shopifyProduct.weight });
-    }
 
     if (csvProduct.inventory !== null && csvProduct.inventory !== shopifyProduct.inventory) {
         const isCappedInventory = csvProduct.inventory > 10 && shopifyProduct.inventory === 10;
@@ -214,6 +211,7 @@ function findMismatches(csvProduct: Product, shopifyProduct: Product): MismatchD
 
     // Heavy product check: weight > 50lbs (22679.6 grams)
     if (csvProduct.weight && csvProduct.weight > 22679.6) {
+        mismatches.push({ field: 'heavy_product_flag', csvValue: `${(csvProduct.weight / 453.592).toFixed(2)} lbs`, shopifyValue: null });
         if (shopifyProduct.templateSuffix !== 'heavy-products') {
             mismatches.push({ field: 'heavy_product_template', csvValue: 'heavy-products', shopifyValue: shopifyProduct.templateSuffix || 'none' });
         }
@@ -301,17 +299,23 @@ export async function runAuditComparison(csvProducts: Product[], shopifyProducts
             // It is a new 'variant' if its handle *does* already exist.
             const missingType = shopifyHandleSet.has(csvProduct.handle) ? 'variant' : 'product';
 
+            const mismatches: MismatchDetail[] = [{
+                field: 'missing_in_shopify',
+                csvValue: `SKU: ${csvProduct.sku}`,
+                shopifyValue: null,
+                missingType: missingType,
+            }];
+
+            if (csvProduct.weight && csvProduct.weight > 22679.6) {
+                mismatches.push({ field: 'heavy_product_flag', csvValue: `${(csvProduct.weight / 453.592).toFixed(2)} lbs`, shopifyValue: null });
+            }
+
             report.push({
                 sku: csvProduct.sku,
                 csvProducts: [csvProduct],
                 shopifyProducts: [],
                 status: 'missing_in_shopify',
-                mismatches: [{
-                    field: 'missing_in_shopify',
-                    csvValue: `SKU: ${csvProduct.sku}`,
-                    shopifyValue: null,
-                    missingType: missingType,
-                }]
+                mismatches: mismatches,
             });
             summary.missing_in_shopify++;
         }
@@ -485,14 +489,6 @@ async function _fixSingleMismatch(
                     await updateInventoryLevel(fixPayload.inventoryItemId, fixPayload.inventory, GAMMA_WAREhouse_LOCATION_ID);
                 }
                 break;
-            case 'weight':
-                 if (fixPayload.variantId && fixPayload.weight) {
-                    const numericVariantId = parseInt(fixPayload.variantId.split('/').pop() || '0', 10);
-                    if (numericVariantId) {
-                       await updateProductVariant(numericVariantId, { weight: fixPayload.weight, weight_unit: 'g' });
-                    }
-                }
-                break;
             case 'h1_tag':
                 if (fixPayload.id && fixPayload.descriptionHtml) {
                     const newDescription = fixPayload.descriptionHtml.replace(/<h1/gi, '<h2').replace(/<\/h1>/gi, '</h2>');
@@ -505,8 +501,9 @@ async function _fixSingleMismatch(
                 }
                 break;
              case 'duplicate_in_shopify':
+             case 'heavy_product_flag':
                 // This is a warning, cannot be fixed programmatically. Handled client-side.
-                return { success: true, message: `SKU ${csvProduct.sku} is a duplicate in Shopify, no server action taken.` };
+                return { success: true, message: `SKU ${csvProduct.sku} is a warning, no server action taken.` };
         }
         return { success: true, message: `Successfully fixed ${fixType} for ${csvProduct.sku}` };
     } catch (error) {
