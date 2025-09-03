@@ -209,7 +209,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
   const [createdProductHandles, setCreatedProductHandles] = useState<Set<string>>(new Set());
-  const [imageCounts, setImageCounts] = useState<Record<string, number | 'loading' | undefined>>({});
+  const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
+  const [loadingImageCounts, setLoadingImageCounts] = useState<Set<string>>(new Set());
   const [editingMediaFor, setEditingMediaFor] = useState<string | null>(null);
   
   const selectAllCheckboxRef = useRef<HTMLButtonElement | null>(null);
@@ -223,6 +224,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setFixedMismatches(getFixedMismatches());
     setCreatedProductHandles(getCreatedProductHandles());
     setImageCounts({});
+    setLoadingImageCounts(new Set());
     setEditingMediaFor(null);
   }, [data, summary]);
 
@@ -679,9 +681,26 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       }, { mismatched: 0, missing_in_shopify: 0, not_in_csv: 0, duplicate_in_shopify: 0 });
   }, [filteredData]);
   
-  const onImageCountChange = useCallback((handle: string, count: number) => {
-    setImageCounts(prev => ({...prev, [handle]: count}));
-  }, []);
+   const handleAccordionChange = useCallback((value: string) => {
+    // This function will be triggered when an accordion is opened.
+    // `value` is the handle of the opened product.
+    if (value && imageCounts[value] === undefined && !loadingImageCounts.has(value)) {
+      setLoadingImageCounts(prev => new Set(prev).add(value));
+      getProductWithImages(groupedByHandle[value][0].shopifyProducts[0].id)
+      .then(data => {
+        setImageCounts(prev => ({ ...prev, [value]: data.images.length }));
+      }).catch(error => {
+        console.error("Failed to fetch image count for handle", value, error);
+        setImageCounts(prev => ({ ...prev, [value]: 0 })); // Set to 0 on error
+      }).finally(() => {
+         setLoadingImageCounts(prev => {
+           const newSet = new Set(prev);
+           newSet.delete(value);
+           return newSet;
+         });
+      });
+    }
+  }, [imageCounts, loadingImageCounts, groupedByHandle]);
 
   const { isAllOnPageSelected, isSomeOnPageSelected } = useMemo(() => {
     const currentPageHandles = new Set(paginatedHandleKeys);
@@ -698,7 +717,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   }, [paginatedHandleKeys, selectedHandles]);
 
   const renderRegularReport = () => (
-    <Accordion type="single" collapsible className="w-full">
+    <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
         {paginatedHandleKeys.map((handle) => {
              const items = groupedByHandle[handle];
              const productTitle = items[0].csvProducts[0]?.name || items[0].shopifyProducts[0]?.name || handle;
@@ -723,6 +742,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
              const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
             
             const productId = items[0].shopifyProducts[0]?.id;
+            const imageCount = imageCounts[handle];
+            const isLoadingImages = loadingImageCounts.has(handle);
 
             return (
             <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
@@ -783,15 +804,21 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         {productId && (
                             <Dialog open={editingMediaFor === productId} onOpenChange={(open) => setEditingMediaFor(open ? productId : null)}>
                                 <DialogTrigger asChild>
-                                    <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => e.stopPropagation()}>
-                                        <ImageIcon className="mr-2 h-4 w-4" />
-                                        Manage Media
+                                    <Button size="sm" variant="outline" className="w-[180px]" onClick={(e) => e.stopPropagation()}>
+                                        {isLoadingImages ? (
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin"/>
+                                        ) : (
+                                            <ImageIcon className="mr-2 h-4 w-4" />
+                                        )}
+                                        Manage Media {imageCount !== undefined && `(${imageCount})`}
                                     </Button>
                                 </DialogTrigger>
-                                <MediaManager 
-                                    key={productId}
-                                    productId={productId}
-                                />
+                                {editingMediaFor === productId && (
+                                     <MediaManager 
+                                        key={productId}
+                                        productId={productId}
+                                    />
+                                )}
                             </Dialog>
                         )}
                         {isMissing && items[0].mismatches[0]?.missingType === 'product' && (
@@ -1192,7 +1219,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           <div className="flex items-center border-t border-b px-4 py-2 bg-muted/50">
             <Checkbox
               id="select-all-page"
-              ref={selectAllCheckboxRef}
               onCheckedChange={(checked) => {
                 if (isSomeOnPageSelected) {
                     handleSelectAllOnPage(true);
@@ -1200,8 +1226,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     handleSelectAllOnPage(!!checked);
                 }
               }}
-              checked={isAllOnPageSelected}
-              aria-label="Select all items on this page"
+              checked={isAllOnPageSelected || isSomeOnPageSelected}
+              ref={selectAllCheckboxRef}
+              data-state={isSomeOnPageSelected ? 'indeterminate' : isAllOnPageSelected ? 'checked' : 'unchecked'}
             />
             <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
               Select all on this page ({paginatedHandleKeys.length} items)
