@@ -169,6 +169,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
     }
 
     const productTitle = variants[0]?.name || 'New Product';
+    const assignedUrls = new Set(localVariants.map(v => v.mediaUrl).filter(Boolean));
 
     return (
         <DialogContent className="max-w-5xl">
@@ -273,7 +274,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                         {imageUrls.map((url, i) => (
-                            <div key={url} className="relative group border rounded-md overflow-hidden">
+                             <div key={url} className="relative group border rounded-md overflow-hidden">
                                 <Label htmlFor={`pre-image-select-${i}`} className="cursor-pointer">
                                     <Image
                                         src={url}
@@ -294,6 +295,11 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                                       <Link className="h-3.5 w-3.5" />
                                    </a>
                                 </div>
+                                {assignedUrls.has(url) && (
+                                     <div className="absolute top-1.5 right-1.5 h-6 w-6 inline-flex items-center justify-center rounded-full bg-secondary/80 text-secondary-foreground pointer-events-auto group-hover:hidden">
+                                        <Link className="h-3.5 w-3.5" />
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
