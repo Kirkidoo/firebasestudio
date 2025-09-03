@@ -209,10 +209,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
   const [createdProductHandles, setCreatedProductHandles] = useState<Set<string>>(new Set());
-  const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
-  const [loadingImageCounts, setLoadingImageCounts] = useState<Set<string>>(new Set());
+  const [imageCounts, setImageCounts] = useState<Record<string, number | 'loading' | undefined>>({});
+  const [editingMediaFor, setEditingMediaFor] = useState<string | null>(null);
   
-  const selectAllCheckboxRef = useRef<HTMLButtonElement>(null);
+  const selectAllCheckboxRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     setReportData(data);
@@ -223,7 +223,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setFixedMismatches(getFixedMismatches());
     setCreatedProductHandles(getCreatedProductHandles());
     setImageCounts({});
-    setLoadingImageCounts(new Set());
+    setEditingMediaFor(null);
   }, [data, summary]);
 
   const uniqueVendors = useMemo(() => {
@@ -679,35 +679,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       }, { mismatched: 0, missing_in_shopify: 0, not_in_csv: 0, duplicate_in_shopify: 0 });
   }, [filteredData]);
   
-  const handleAccordionChange = useCallback((value: string) => {
-    if (!value) return;
-
-    const handle = value;
-    if (imageCounts[handle] !== undefined || loadingImageCounts.has(handle)) return;
-
-    const item = filteredData.find(item => getHandle(item) === handle);
-    const productId = item?.shopifyProducts[0]?.id;
-    
-    if (productId) {
-      setLoadingImageCounts(prev => new Set(prev).add(handle));
-      getProductWithImages(productId).then(data => {
-        setImageCounts(prev => ({ ...prev, [handle]: data.images.length }));
-      }).catch(error => {
-        console.error("Failed to fetch image count for handle", handle, error);
-        setImageCounts(prev => ({ ...prev, [handle]: 0 })); // Set to 0 on error
-      }).finally(() => {
-         setLoadingImageCounts(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(handle);
-          return newSet;
-        });
-      });
-    }
-  }, [filteredData, imageCounts, loadingImageCounts]);
-
-
   const onImageCountChange = useCallback((handle: string, count: number) => {
-      setImageCounts(prev => ({...prev, [handle]: count}));
+    setImageCounts(prev => ({...prev, [handle]: count}));
   }, []);
 
   const { isAllOnPageSelected, isSomeOnPageSelected } = useMemo(() => {
@@ -725,7 +698,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   }, [paginatedHandleKeys, selectedHandles]);
 
   const renderRegularReport = () => (
-    <Accordion type="single" collapsible className="w-full" onValueChange={handleAccordionChange}>
+    <Accordion type="single" collapsible className="w-full">
         {paginatedHandleKeys.map((handle) => {
              const items = groupedByHandle[handle];
              const productTitle = items[0].csvProducts[0]?.name || items[0].shopifyProducts[0]?.name || handle;
@@ -808,22 +781,16 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         <Badge variant="outline" className="w-[80px] justify-center">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
                         
                         {productId && (
-                            <Dialog>
+                            <Dialog open={editingMediaFor === productId} onOpenChange={(open) => setEditingMediaFor(open ? productId : null)}>
                                 <DialogTrigger asChild>
                                     <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => e.stopPropagation()}>
-                                        {loadingImageCounts.has(handle) ? (
-                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        ) : (
-                                            <ImageIcon className="mr-2 h-4 w-4" />
-                                        )}
-                                        Manage Media {imageCounts[handle] !== undefined && `(${imageCounts[handle]})`}
+                                        <ImageIcon className="mr-2 h-4 w-4" />
+                                        Manage Media
                                     </Button>
                                 </DialogTrigger>
                                 <MediaManager 
                                     key={productId}
                                     productId={productId}
-                                    onImageCountChange={(count) => onImageCountChange(handle, count)}
-                                    initialImageCount={imageCounts[handle]}
                                 />
                             </Dialog>
                         )}
@@ -1233,8 +1200,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     handleSelectAllOnPage(!!checked);
                 }
               }}
+              checked={isAllOnPageSelected}
               aria-label="Select all items on this page"
-              data-state={isAllOnPageSelected ? 'checked' : (isSomeOnPageSelected ? 'indeterminate' : 'unchecked')}
             />
             <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
               Select all on this page ({paginatedHandleKeys.length} items)

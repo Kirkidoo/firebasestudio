@@ -21,11 +21,9 @@ import { cn } from '@/lib/utils';
 
 interface MediaManagerProps {
     productId: string;
-    onImageCountChange: (count: number) => void;
-    initialImageCount?: number;
 }
 
-export function MediaManager({ productId, onImageCountChange, initialImageCount }: MediaManagerProps) {
+export function MediaManager({ productId }: MediaManagerProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [variants, setVariants] = useState<Partial<Product>[]>([]);
@@ -60,13 +58,6 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
         fetchMediaData();
     }, [fetchMediaData]);
     
-     useEffect(() => {
-        if (!isLoading) {
-            onImageCountChange(images.length);
-        }
-    }, [images, isLoading, onImageCountChange]);
-
-
     const handleImageSelection = (imageId: number, checked: boolean) => {
         const newSet = new Set(selectedImageIds);
         if (checked) {
@@ -397,8 +388,8 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
                                             />
                                         </Label>
                                         <div className={cn(
-                                            "absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-between p-1.5 pointer-events-none",
-                                            isSelected && "opacity-100"
+                                            "absolute inset-0 bg-black/60 transition-opacity flex items-start justify-between p-1.5 pointer-events-none",
+                                            (isSelected || isSubmitting) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                                         )}>
                                              <Checkbox
                                                 id={`image-select-${image.id}`}
@@ -429,7 +420,10 @@ export function MediaManager({ productId, onImageCountChange, initialImageCount 
                                             <TooltipProvider>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
-                                                        <div className="absolute top-1.5 right-1.5 h-6 w-6 inline-flex items-center justify-center rounded-full bg-secondary/80 text-secondary-foreground pointer-events-auto group-hover:hidden">
+                                                        <div className={cn(
+                                                            "absolute top-1.5 right-1.5 h-6 w-6 inline-flex items-center justify-center rounded-full bg-secondary/80 text-secondary-foreground pointer-events-auto",
+                                                            !isSelected && "group-hover:hidden"
+                                                        )}>
                                                             <Link className="h-3.5 w-3.5" />
                                                         </div>
                                                     </TooltipTrigger>
