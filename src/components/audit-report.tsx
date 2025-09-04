@@ -12,7 +12,7 @@ import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts, deleteUnlinkedImages } from '@/app/actions';
+import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts, deleteUnlinkedImages, deleteUnlinkedImagesForMultipleProducts } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
@@ -751,6 +751,37 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       });
   }, [imageCounts, toast, handleImageCountChange]);
 
+  const handleBulkDeleteUnlinked = useCallback(() => {
+    const productIdsToDelete = Array.from(selectedHandles).map(handle => {
+        const items = groupedByHandle[handle];
+        const productId = items?.[0]?.shopifyProducts?.[0]?.id;
+        const imageCount = productId ? imageCounts[productId] : 0;
+        if (productId && imageCount !== undefined && imageCount > items.length) {
+            return productId;
+        }
+        return null;
+    }).filter((id): id is string => id !== null);
+
+    if (productIdsToDelete.length === 0) {
+        toast({ title: "No items to fix", description: "Select products with unlinked images to delete them.", variant: "destructive" });
+        return;
+    }
+
+    startTransition(async () => {
+        const result = await deleteUnlinkedImagesForMultipleProducts(productIdsToDelete);
+        toast({ title: "Bulk Delete Complete", description: result.message });
+
+        // Optimistically update counts
+        result.results.forEach(res => {
+            if (res.success && res.deletedCount > 0) {
+                handleImageCountChange(res.productId, imageCounts[res.productId] - res.deletedCount);
+            }
+        });
+        setSelectedHandles(new Set());
+    });
+}, [selectedHandles, groupedByHandle, imageCounts, toast, handleImageCountChange]);
+
+
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full">
         {paginatedHandleKeys.map((handle) => {
@@ -784,7 +815,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             return (
             <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
                 <AccordionHeader className="flex items-center p-0">
-                    {(filter === 'mismatched' || filter === 'missing_in_shopify') && (
+                    {(filter === 'mismatched' || filter === 'missing_in_shopify' || filter === 'all') && (
                         <div className="p-3 pl-4">
                             <Checkbox
                                 checked={selectedHandles.has(handle)}
@@ -1279,9 +1310,33 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     Create {selectedHandles.size} Selected
                 </Button>
             )}
+            {selectedHandles.size > 0 && (
+                <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                       <Button variant="destructive" disabled={isFixing} className="w-full md:w-auto">
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Unlinked ({selectedHandles.size})
+                        </Button>
+                    </AlertDialogTrigger>
+                     <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Unlinked Images?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                This will attempt to delete unlinked images for {selectedHandles.size} selected products. This action cannot be undone.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={handleBulkDeleteUnlinked} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                Yes, Delete Unlinked
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+            )}
         </div>
 
-        {(filter === 'mismatched' || filter === 'missing_in_shopify') && paginatedHandleKeys.length > 0 && (
+        {(filter === 'mismatched' || filter === 'missing_in_shopify' || filter === 'all') && paginatedHandleKeys.length > 0 && (
           <div className="flex items-center border-t border-b px-4 py-2 bg-muted/50">
             <Checkbox
               ref={selectAllCheckboxRef}

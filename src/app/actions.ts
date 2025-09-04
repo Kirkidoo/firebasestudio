@@ -909,6 +909,25 @@ export async function deleteUnlinkedImages(productId: string): Promise<{ success
         return { success: false, message, deletedCount: 0 };
     }
 }
+
+export async function deleteUnlinkedImagesForMultipleProducts(productIds: string[]): Promise<{ success: boolean; message: string; results: { productId: string, success: boolean, deletedCount: number, message: string }[] }> {
+    console.log(`Starting bulk deletion of unlinked images for ${productIds.length} products.`);
+    const results = [];
+    let totalSuccessCount = 0;
+
+    for (const productId of productIds) {
+        const result = await deleteUnlinkedImages(productId);
+        results.push({ productId, ...result });
+        if(result.success && result.deletedCount > 0) {
+            totalSuccessCount++;
+        }
+        await sleep(500); // Add delay to avoid rate limiting
+    }
+
+    const message = `Attempted to delete unlinked images for ${productIds.length} products. Successfully processed ${totalSuccessCount}.`;
+    console.log(message);
+    return { success: totalSuccessCount > 0, message, results };
+}
       
 
     
@@ -916,6 +935,7 @@ export async function deleteUnlinkedImages(productId: string): Promise<{ success
     
 
     
+
 
 
 
