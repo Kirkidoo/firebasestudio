@@ -215,10 +215,11 @@ function getShopifyRestClient() {
 
 const convertWeightToGrams = (weight: number | null | undefined, unit: string | null | undefined): number | null => {
     if (weight === null || weight === undefined) return null;
-    if (unit === 'GRAMS') return weight;
-    if (unit === 'KILOGRAMS') return weight * 1000;
-    if (unit === 'POUNDS') return weight * 453.592;
-    if (unit === 'OUNCES') return weight * 28.3495;
+    const upperUnit = unit?.toUpperCase();
+    if (upperUnit === 'G' || upperUnit === 'GRAMS') return weight;
+    if (upperUnit === 'KG' || upperUnit === 'KILOGRAMS') return weight * 1000;
+    if (upperUnit === 'LB' || upperUnit === 'POUNDS') return weight * 453.592;
+    if (upperUnit === 'OZ' || upperUnit === 'OUNCES') return weight * 28.3495;
     return weight; // Default to returning the value if unit is unknown or missing
 };
 
@@ -1055,4 +1056,5 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
     
 
     
+
 
