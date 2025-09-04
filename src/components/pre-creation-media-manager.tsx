@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -277,16 +278,14 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                         {imageUrls.map((url, i) => {
                              const isSelected = selectedImageUrls.has(url);
                              return (
-                                 <div key={url} className="relative group border rounded-md overflow-hidden">
-                                    <Label htmlFor={`pre-image-select-${i}`} className="cursor-pointer">
-                                        <Image
-                                            src={url}
-                                            alt={`Product image`}
-                                            width={150}
-                                            height={150}
-                                            className="object-cover w-full aspect-square"
-                                        />
-                                    </Label>
+                                 <div key={url} className="relative group border rounded-md overflow-hidden cursor-pointer" onClick={() => handleImageSelection(url, !isSelected)}>
+                                    <Image
+                                        src={url}
+                                        alt={`Product image`}
+                                        width={150}
+                                        height={150}
+                                        className="object-cover w-full aspect-square"
+                                    />
                                     <div className={cn(
                                         "absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-start justify-between p-1.5 pointer-events-none",
                                         isSelected && "opacity-100"
@@ -297,7 +296,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                                             checked={isSelected}
                                             onCheckedChange={(checked) => handleImageSelection(url, !!checked)}
                                         />
-                                       <a href={url} target="_blank" rel="noopener noreferrer" className="h-6 w-6 inline-flex items-center justify-center rounded-md bg-secondary/80 text-secondary-foreground hover:bg-secondary pointer-events-auto">
+                                       <a href={url} target="_blank" rel="noopener noreferrer" className="h-6 w-6 inline-flex items-center justify-center rounded-md bg-secondary/80 text-secondary-foreground hover:bg-secondary pointer-events-auto" onClick={(e) => e.stopPropagation()}>
                                           <Link className="h-3.5 w-3.5" />
                                        </a>
                                     </div>

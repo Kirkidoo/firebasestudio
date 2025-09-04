@@ -384,16 +384,14 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                 const isAssigned = image.variant_ids && image.variant_ids.length > 0;
                                 const isSelected = selectedImageIds.has(image.id);
                                 return (
-                                    <div key={image.id} className="relative group border rounded-md overflow-hidden">
-                                        <Label htmlFor={`image-select-${image.id}`} className="cursor-pointer">
-                                            <Image
-                                                src={image.src}
-                                                alt={`Product image ${image.id}`}
-                                                width={150}
-                                                height={150}
-                                                className="object-cover w-full aspect-square"
-                                            />
-                                        </Label>
+                                    <div key={image.id} className="relative group border rounded-md overflow-hidden cursor-pointer" onClick={() => handleImageSelection(image.id, !isSelected)}>
+                                        <Image
+                                            src={image.src}
+                                            alt={`Product image ${image.id}`}
+                                            width={150}
+                                            height={150}
+                                            className="object-cover w-full aspect-square"
+                                        />
                                         <div className={cn(
                                             "absolute inset-0 bg-black/60 transition-opacity flex items-start justify-between p-1.5",
                                             (isSelected || isSubmitting) ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -407,7 +405,7 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                             />
                                              <AlertDialog>
                                                 <AlertDialogTrigger asChild>
-                                                    <Button variant="destructive" size="icon" className="h-6 w-6 pointer-events-auto" disabled={isSubmitting}>
+                                                    <Button variant="destructive" size="icon" className="h-6 w-6 pointer-events-auto" disabled={isSubmitting} onClick={(e) => e.stopPropagation()}>
                                                         <Trash2 className="h-3.5 w-3.5" />
                                                     </Button>
                                                 </AlertDialogTrigger>
