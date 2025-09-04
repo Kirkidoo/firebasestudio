@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearAuditMemory, getCreatedProductHandles, markProductAsCreated } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, Weight, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -111,7 +111,6 @@ const MissingProductDetailsDialog = ({ product }: { product: Product }) => {
         { label: "Variant Compare At Price", value: product.compareAtPrice ? `$${product.compareAtPrice.toFixed(2)}` : 'N/A', notes: "From 'Compare At Price' column" },
         { label: "Variant Cost", value: product.costPerItem ? `$${product.costPerItem.toFixed(2) ?? 'N/A'}` : 'N/A', notes: "From 'Cost Per Item' column" },
         { label: "Variant Barcode (GTIN)", value: product.barcode || 'N/A', notes: "From 'Variant Barcode' column" },
-        { label: "Variant Weight", value: product.weight ? `${(product.weight / 453.592).toFixed(2)} lbs` : 'N/A', notes: "From 'Variant Grams' column" },
         { label: "Variant Inventory", value: product.inventory, notes: "From 'Variant Inventory Qty'. Will be set at 'Gamma Warehouse' location." },
 
         // Options
@@ -181,9 +180,6 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
             </span>
             <span className="flex items-center gap-1.5">
                 <List className="h-3.5 w-3.5" /> Stock: <span className="font-medium text-foreground">{product.inventory ?? 'N/A'}</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-                <Weight className="h-3.5 w-3.5" /> Weight: <span className="font-medium text-foreground">{gToLbs(product.weight)}</span>
             </span>
         </div>
     );
@@ -572,7 +568,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             name: <Text className="h-4 w-4" />,
             price: <DollarSign className="h-4 w-4" />,
             inventory: <List className="h-4 w-4" />,
-            heavy_product_flag: <Weight className="h-4 w-4" />,
+            heavy_product_flag: <FileWarning className="h-4 w-4" />,
             h1_tag: <span className="text-xs font-bold leading-none">H1</span>,
             heavy_product_template: <FileWarning className="h-4 w-4" />,
             duplicate_in_shopify: <Copy className="h-4 w-4" />,
@@ -741,6 +737,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     };
   }, [paginatedHandleKeys, selectedHandles]);
 
+  const handleImageCountChange = useCallback((productId: string, newCount: number) => {
+      setImageCounts(prev => ({...prev, [productId]: newCount}));
+  }, []);
+
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full">
         {paginatedHandleKeys.map((handle) => {
@@ -842,6 +842,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                      <MediaManager 
                                         key={productId}
                                         productId={productId}
+                                        onImageCountChange={(newCount) => handleImageCountChange(productId, newCount)}
                                     />
                                 )}
                             </Dialog>
@@ -1243,9 +1244,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         {(filter === 'mismatched' || filter === 'missing_in_shopify') && paginatedHandleKeys.length > 0 && (
           <div className="flex items-center border-t border-b px-4 py-2 bg-muted/50">
             <Checkbox
+              ref={selectAllCheckboxRef}
               id="select-all-page"
               onCheckedChange={(checked) => {
-                if (isSomeOnPageSelected) {
+                 if (isSomeOnPageSelected) {
                     handleSelectAllOnPage(true);
                 } else {
                     handleSelectAllOnPage(!!checked);

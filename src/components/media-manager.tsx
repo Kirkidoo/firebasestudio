@@ -21,9 +21,10 @@ import { cn } from '@/lib/utils';
 
 interface MediaManagerProps {
     productId: string;
+    onImageCountChange: (newCount: number) => void;
 }
 
-export function MediaManager({ productId }: MediaManagerProps) {
+export function MediaManager({ productId, onImageCountChange }: MediaManagerProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [variants, setVariants] = useState<Partial<Product>[]>([]);
@@ -84,7 +85,9 @@ export function MediaManager({ productId }: MediaManagerProps) {
         startSubmitting(async () => {
             const result = await addImageFromUrl(productId, newImageUrl);
             if(result.success && result.image) {
-                setImages(prev => [...prev, result.image!]);
+                const newImages = [...images, result.image];
+                setImages(newImages);
+                onImageCountChange(newImages.length);
                 setNewImageUrl('');
                 toast({ title: 'Success!', description: 'Image has been added.' });
             } else {
@@ -121,7 +124,9 @@ export function MediaManager({ productId }: MediaManagerProps) {
             const result = await deleteImage(productId, imageId);
             if(result.success) {
                 toast({ title: 'Success!', description: 'Image has been deleted.' });
-                setImages(prevImages => prevImages.filter(img => img.id !== imageId));
+                const newImages = images.filter(img => img.id !== imageId);
+                setImages(newImages);
+                onImageCountChange(newImages.length);
             } else {
                  toast({ title: 'Error', description: result.message, variant: 'destructive' });
             }
@@ -161,7 +166,9 @@ export function MediaManager({ productId }: MediaManagerProps) {
             }
 
             if (successfullyDeletedIds.length > 0) {
-                setImages(prevImages => prevImages.filter(img => !successfullyDeletedIds.includes(img.id)));
+                const newImages = images.filter(img => !successfullyDeletedIds.includes(img.id));
+                setImages(newImages);
+                onImageCountChange(newImages.length);
             }
             setSelectedImageIds(new Set());
         });
@@ -388,8 +395,9 @@ export function MediaManager({ productId }: MediaManagerProps) {
                                             />
                                         </Label>
                                         <div className={cn(
-                                            "absolute inset-0 bg-black/60 transition-opacity flex items-start justify-between p-1.5 pointer-events-none",
-                                            (isSelected || isSubmitting) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                            "absolute inset-0 bg-black/60 transition-opacity flex items-start justify-between p-1.5",
+                                            (isSelected || isSubmitting) ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                                             isSubmitting ? "pointer-events-none" : "pointer-events-auto"
                                         )}>
                                              <Checkbox
                                                 id={`image-select-${image.id}`}
