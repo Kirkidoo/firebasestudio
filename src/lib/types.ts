@@ -31,7 +31,7 @@ export interface Product {
 export type AuditStatus = 'mismatched' | 'not_in_csv' | 'missing_in_shopify' | 'duplicate_in_shopify' | 'matched';
 
 export interface MismatchDetail {
-  field: 'name' | 'price' | 'inventory' | 'h1_tag' | 'missing_in_shopify' | 'duplicate_in_shopify' | 'heavy_product_template' | 'heavy_product_flag' | 'weight';
+  field: 'name' | 'price' | 'inventory' | 'h1_tag' | 'missing_in_shopify' | 'duplicate_in_shopify' | 'heavy_product_template' | 'heavy_product_flag';
   csvValue: string | number | null;
   shopifyValue: string | number | null;
   missingType?: 'product' | 'variant';

@@ -191,7 +191,7 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
 
 const HANDLES_PER_PAGE = 20;
 
-const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag', 'weight'];
+const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag'];
 
 export default function AuditReport({ data, summary, duplicates, fileName, onReset, onRefresh }: { data: AuditResult[], summary: any, duplicates: DuplicateSku[], fileName: string, onReset: () => void, onRefresh: () => void }) {
   const [filter, setFilter] = useState<FilterType>('all');
@@ -577,7 +577,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             heavy_product_template: <FileWarning className="h-4 w-4" />,
             duplicate_in_shopify: <Copy className="h-4 w-4" />,
             missing_in_shopify: <XCircle className="h-4 w-4" />,
-            weight: <Weight className="h-4 w-4" />,
         };
 
         return (
@@ -691,9 +690,9 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             for (const handle of paginatedHandleKeys) {
                 const items = groupedByHandle[handle];
                 const productId = items?.[0]?.shopifyProducts?.[0]?.id;
-                if (productId && imageCounts[handle] === undefined && !loadingImageCounts.has(handle)) {
+                if (productId && imageCounts[productId] === undefined && !loadingImageCounts.has(productId)) {
                     productIdsToFetch.push(productId);
-                    handlesToFetch.push(handle);
+                    handlesToFetch.push(productId);
                 }
             }
 
@@ -725,7 +724,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         };
 
         fetchCounts();
-    }, [paginatedHandleKeys, groupedByHandle, toast]);
+    }, [paginatedHandleKeys, groupedByHandle, toast, imageCounts, loadingImageCounts]);
 
 
   const { isAllOnPageSelected, isSomeOnPageSelected } = useMemo(() => {
@@ -768,8 +767,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
              const isOnlyVariantNotInCsv = notInCsv && allVariantsForHandleInShopify.length === items.length;
             
             const productId = items[0].shopifyProducts[0]?.id;
-            const imageCount = imageCounts[handle];
-            const isLoadingImages = loadingImageCounts.has(handle);
+            const imageCount = productId ? imageCounts[productId] : undefined;
+            const isLoadingImages = productId ? loadingImageCounts.has(productId) : false;
 
             return (
             <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">

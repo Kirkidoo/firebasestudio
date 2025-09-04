@@ -206,9 +206,9 @@ function findMismatches(csvProduct: Product, shopifyProduct: Product): MismatchD
     }
     
     // Check for missing weight
-    if (csvProduct.weight !== null && (shopifyProduct.weight === null || shopifyProduct.weight === 0)) {
-        mismatches.push({ field: 'weight', csvValue: `${(csvProduct.weight / 453.592).toFixed(2)} lbs`, shopifyValue: 'Missing' });
-    }
+    // if (csvProduct.weight !== null && (shopifyProduct.weight === null || shopifyProduct.weight === 0)) {
+    //     mismatches.push({ field: 'weight', csvValue: `${(csvProduct.weight / 453.592).toFixed(2)} lbs`, shopifyValue: 'Missing' });
+    // }
 
 
     if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
@@ -495,14 +495,14 @@ async function _fixSingleMismatch(
                     await updateInventoryLevel(fixPayload.inventoryItemId, fixPayload.inventory, GAMMA_WAREhouse_LOCATION_ID);
                 }
                 break;
-            case 'weight':
-                 if (fixPayload.variantId && fixPayload.weight !== null) {
-                    const numericVariantId = parseInt(fixPayload.variantId.split('/').pop() || '0', 10);
-                     if (numericVariantId) {
-                       await updateProductVariant(numericVariantId, { weight: fixPayload.weight, weight_unit: 'g' });
-                    }
-                }
-                break;
+            // case 'weight':
+            //      if (fixPayload.variantId && fixPayload.weight !== null) {
+            //         const numericVariantId = parseInt(fixPayload.variantId.split('/').pop() || '0', 10);
+            //          if (numericVariantId) {
+            //            await updateProductVariant(numericVariantId, { weight: fixPayload.weight, weight_unit: 'g' });
+            //         }
+            //     }
+            //     break;
             case 'h1_tag':
                 if (fixPayload.id && fixPayload.descriptionHtml) {
                     const newDescription = fixPayload.descriptionHtml.replace(/<h1/gi, '<h2').replace(/<\/h1>/gi, '</h2>');
@@ -896,4 +896,5 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
     
+
 
