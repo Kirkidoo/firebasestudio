@@ -872,6 +872,8 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                                     id
                                     sku
                                     price
+                                    weight
+                                    weightUnit
                                     inventoryQuantity
                                     inventoryItem {
                                         id
@@ -879,8 +881,6 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                                             amount
                                         }
                                         tracked
-                                        weight
-                                        weightUnit
                                     }
                                     image {
                                       id
@@ -1017,7 +1017,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     compareAtPrice: null,
                     costPerItem: shopifyProduct.inventoryItem?.unitCost?.amount ? parseFloat(shopifyProduct.inventoryItem.unitCost.amount) : null,
                     barcode: null,
-                    weight: convertWeightToGrams(shopifyProduct.inventoryItem?.weight, shopifyProduct.inventoryItem?.weightUnit),
+                    weight: convertWeightToGrams(shopifyProduct.weight, shopifyProduct.weightUnit),
                     mediaUrl: null, // Note: Bulk export doesn't easily link variant images
                     imageId: shopifyProduct.image?.id ? parseInt(shopifyProduct.image.id.split('/').pop(), 10) : null,
                     category: null,
