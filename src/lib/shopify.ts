@@ -984,7 +984,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
     // First pass: map all parent products by their ID
     for (const line of lines) {
         const item = JSON.parse(line);
-        if (item.id.includes('gid://shopify/Product/')) {
+        if (item.id && item.id.includes('gid://shopify/Product/')) {
             parentProducts.set(item.id, item);
         }
     }
@@ -993,7 +993,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
     for (const line of lines) {
         const shopifyProduct = JSON.parse(line);
         
-        if (shopifyProduct.id.includes('gid://shopify/ProductVariant')) {
+        if (shopifyProduct.id && shopifyProduct.id.includes('gid://shopify/ProductVariant')) {
             const variantId = shopifyProduct.id;
             const sku = shopifyProduct.sku;
             const parentId = shopifyProduct.__parentId;
