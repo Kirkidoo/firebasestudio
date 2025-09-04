@@ -12,7 +12,7 @@ import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts } from '@/app/actions';
+import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts, deleteUnlinkedImages } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
@@ -739,6 +739,18 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       setImageCounts(prev => ({...prev, [productId]: newCount}));
   }, []);
 
+  const handleDeleteUnlinked = useCallback((productId: string) => {
+      startTransition(async () => {
+          const result = await deleteUnlinkedImages(productId);
+          if (result.success) {
+              toast({ title: "Success!", description: result.message });
+              handleImageCountChange(productId, imageCounts[productId] - result.deletedCount);
+          } else {
+              toast({ title: "Error Deleting Images", description: result.message, variant: "destructive" });
+          }
+      });
+  }, [imageCounts, toast, handleImageCountChange]);
+
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full">
         {paginatedHandleKeys.map((handle) => {
@@ -767,6 +779,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             const productId = items[0].shopifyProducts[0]?.id;
             const imageCount = productId ? imageCounts[productId] : undefined;
             const isLoadingImages = productId ? loadingImageCounts.has(productId) : false;
+            const canHaveUnlinkedImages = imageCount !== undefined && items.length < imageCount;
 
             return (
             <AccordionItem value={handle} key={handle} className="border-b last:border-b-0">
@@ -796,6 +809,30 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     </AccordionTrigger>
                     <div className="flex items-center gap-2 p-3">
                          {hasMismatch && <MismatchIcons mismatches={allMismatches} />}
+                        {canHaveUnlinkedImages && (
+                          <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                  <Button size="sm" variant="destructive" onClick={(e) => e.stopPropagation()} disabled={isFixing}>
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete Unlinked ({imageCount! - items.length})
+                                  </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete Unlinked Images?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                          This product has {imageCount} images but only {items.length} variants (SKUs). This action will permanently delete the {imageCount! - items.length} unlinked images from Shopify. This cannot be undone.
+                                      </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction onClick={(e) => {e.stopPropagation(); handleDeleteUnlinked(productId!)}} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                          Yes, Delete Images
+                                      </AlertDialogAction>
+                                  </AlertDialogFooter>
+                              </AlertDialogContent>
+                          </AlertDialog>
+                        )}
                         {items.some(i => i.status === 'mismatched' && i.mismatches.length > 0) && (
                             <Button size="sm" onClick={(e) => { e.stopPropagation(); handleBulkFix(items.filter(i => i.status === 'mismatched'))}} disabled={isFixing}>
                                 <Bot className="mr-2 h-4 w-4" />

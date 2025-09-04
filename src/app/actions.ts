@@ -204,12 +204,6 @@ function findMismatches(csvProduct: Product, shopifyProduct: Product): MismatchD
             mismatches.push({ field: 'inventory', csvValue: csvProduct.inventory, shopifyValue: shopifyProduct.inventory });
         }
     }
-    
-    // Check for missing weight
-    // if (csvProduct.weight !== null && (shopifyProduct.weight === null || shopifyProduct.weight === 0)) {
-    //     mismatches.push({ field: 'weight', csvValue: `${(csvProduct.weight / 453.592).toFixed(2)} lbs`, shopifyValue: 'Missing' });
-    // }
-
 
     if (shopifyProduct.descriptionHtml && /<h1/i.test(shopifyProduct.descriptionHtml)) {
         mismatches.push({ field: 'h1_tag', csvValue: 'No H1 Expected', shopifyValue: 'H1 Found' });
@@ -495,14 +489,6 @@ async function _fixSingleMismatch(
                     await updateInventoryLevel(fixPayload.inventoryItemId, fixPayload.inventory, GAMMA_WAREhouse_LOCATION_ID);
                 }
                 break;
-            // case 'weight':
-            //      if (fixPayload.variantId && fixPayload.weight !== null) {
-            //         const numericVariantId = parseInt(fixPayload.variantId.split('/').pop() || '0', 10);
-            //          if (numericVariantId) {
-            //            await updateProductVariant(numericVariantId, { weight: fixPayload.weight, weight_unit: 'g' });
-            //         }
-            //     }
-            //     break;
             case 'h1_tag':
                 if (fixPayload.id && fixPayload.descriptionHtml) {
                     const newDescription = fixPayload.descriptionHtml.replace(/<h1/gi, '<h2').replace(/<\/h1>/gi, '</h2>');
@@ -888,7 +874,41 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     }
 }
     
+export async function deleteUnlinkedImages(productId: string): Promise<{ success: boolean; message: string; deletedCount: number }> {
+    console.log(`Starting to delete unlinked images for product GID: ${productId}`);
+    try {
+        const { images, variants } = await getProductWithImages(productId);
+        const linkedImageIds = new Set(variants.map(v => v.imageId).filter(id => id !== null));
 
+        const unlinkedImages = images.filter(image => !linkedImageIds.has(image.id));
+
+        if (unlinkedImages.length === 0) {
+            return { success: true, message: 'No unlinked images found to delete.', deletedCount: 0 };
+        }
+
+        console.log(`Found ${unlinkedImages.length} unlinked images to delete.`);
+        let deletedCount = 0;
+        const deletionPromises = unlinkedImages.map(async (image) => {
+            const result = await deleteImage(productId, image.id);
+            if(result.success) {
+                deletedCount++;
+            } else {
+                 console.warn(`Failed to delete image ID ${image.id}: ${result.message}`);
+            }
+        });
+        
+        await Promise.all(deletionPromises);
+
+        const message = `Successfully deleted ${deletedCount} of ${unlinkedImages.length} unlinked images.`;
+        console.log(message);
+        return { success: true, message, deletedCount };
+
+    } catch (error) {
+        console.error(`Failed to delete unlinked images for product ${productId}:`, error);
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return { success: false, message, deletedCount: 0 };
+    }
+}
       
 
     
@@ -896,5 +916,6 @@ export async function deleteImage(productId: string, imageId: number): Promise<{
     
 
     
+
 
 
