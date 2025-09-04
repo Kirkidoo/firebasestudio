@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import { useState, useTransition, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -13,7 +12,7 @@ import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductWithImages, getProductImageCounts } from '@/app/actions';
+import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
@@ -25,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { MediaManager } from '@/components/media-manager';
 import { PreCreationMediaManager } from '@/components/pre-creation-media-manager';
 import { Separator } from './ui/separator';
+import { cn } from '@/lib/utils';
 
 
 type FilterType = 'all' | 'mismatched' | 'missing_in_shopify' | 'not_in_csv' | 'duplicate_in_shopify';
@@ -681,14 +681,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             if (paginatedHandleKeys.length === 0) return;
 
             const productIdsToFetch: string[] = [];
-            const handlesToFetch: string[] = [];
 
             for (const handle of paginatedHandleKeys) {
                 const items = groupedByHandle[handle];
                 const productId = items?.[0]?.shopifyProducts?.[0]?.id;
                 if (productId && imageCounts[productId] === undefined && !loadingImageCounts.has(productId)) {
                     productIdsToFetch.push(productId);
-                    handlesToFetch.push(productId);
                 }
             }
 
@@ -696,7 +694,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
             setLoadingImageCounts(prev => {
                 const newSet = new Set(prev);
-                handlesToFetch.forEach(h => newSet.add(h));
+                productIdsToFetch.forEach(id => newSet.add(id));
                 return newSet;
             });
 
@@ -713,7 +711,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             } finally {
                 setLoadingImageCounts(prev => {
                     const newSet = new Set(prev);
-                    handlesToFetch.forEach(h => newSet.delete(h));
+                    productIdsToFetch.forEach(id => newSet.delete(id));
                     return newSet;
                 });
             }
@@ -835,7 +833,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                         ) : (
                                             <ImageIcon className="mr-2 h-4 w-4" />
                                         )}
-                                        Manage Media {imageCount !== undefined && `(${imageCount})`}
+                                        Manage Media{' '}
+                                        {imageCount !== undefined && (
+                                            <span className={cn(imageCount > 1 ? "text-yellow-400 font-bold" : "")}>
+                                                ({imageCount})
+                                            </span>
+                                        )}
                                     </Button>
                                 </DialogTrigger>
                                 {editingMediaFor === productId && (
@@ -1310,3 +1313,5 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
+
+    
