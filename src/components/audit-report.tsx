@@ -203,6 +203,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [selectedVendor, setSelectedVendor] = useState<string>('all');
   const [editingMissingMedia, setEditingMissingMedia] = useState<string | null>(null);
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
+  const [hasSelectionWithUnlinkedImages, setHasSelectionWithUnlinkedImages] = useState(false);
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
   const [createdProductHandles, setCreatedProductHandles] = useState<Set<string>>(new Set());
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
@@ -217,6 +218,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setShowRefresh(false);
     setCurrentPage(1);
     setSelectedHandles(new Set());
+    setHasSelectionWithUnlinkedImages(false);
     setFixedMismatches(getFixedMismatches());
     setCreatedProductHandles(getCreatedProductHandles());
     setImageCounts({});
@@ -617,17 +619,27 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     });
   };
 
+  const updateSelectionWithUnlinkedImages = (selection: Set<string>) => {
+    const hasUnlinked = Array.from(selection).some(handle => {
+        const items = groupedByHandle[handle];
+        if (!items) return false;
+        const productId = items[0]?.shopifyProducts[0]?.id;
+        const imageCount = productId ? imageCounts[productId] : undefined;
+        return imageCount !== undefined && items.length < imageCount;
+    });
+    setHasSelectionWithUnlinkedImages(hasUnlinked);
+  };
+
   const handleSelectHandle = (handle: string, checked: boolean) => {
-    setSelectedHandles(prev => {
-        const newSet = new Set(prev);
-        if(checked) {
-            newSet.add(handle);
-        } else {
-            newSet.delete(handle);
-        }
-        return newSet;
-    })
-  }
+    const newSelectedHandles = new Set(selectedHandles);
+    if (checked) {
+        newSelectedHandles.add(handle);
+    } else {
+        newSelectedHandles.delete(handle);
+    }
+    setSelectedHandles(newSelectedHandles);
+    updateSelectionWithUnlinkedImages(newSelectedHandles);
+  };
   
   const handleSelectAllOnPage = (checked: boolean | 'indeterminate') => {
     const newSelectedHandles = new Set(selectedHandles);
@@ -637,6 +649,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       paginatedHandleKeys.forEach(handle => newSelectedHandles.delete(handle));
     }
     setSelectedHandles(newSelectedHandles);
+    updateSelectionWithUnlinkedImages(newSelectedHandles);
   };
   
   const handleClearAuditMemory = () => {
@@ -644,7 +657,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setFixedMismatches(new Set());
     setCreatedProductHandles(new Set());
     toast({ title: "Cleared 'Remembered' Fixes & Creations", description: "The report is now showing all original items. Run a new non-cached audit for the latest data." });
-  }
+  };
   
   const handleMarkAsFixed = (sku: string, field: MismatchDetail['field']) => {
     markMismatchAsFixed(sku, field);
@@ -756,7 +769,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         const items = groupedByHandle[handle];
         const productId = items?.[0]?.shopifyProducts?.[0]?.id;
         const imageCount = productId ? imageCounts[productId] : 0;
-        if (productId && imageCount !== undefined && imageCount > items.length) {
+        if (productId && imageCount !== undefined && items.length < imageCount) {
             return productId;
         }
         return null;
@@ -771,7 +784,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         const result = await deleteUnlinkedImagesForMultipleProducts(productIdsToDelete);
         toast({ title: "Bulk Delete Complete", description: result.message });
 
-        // Optimistically update counts
         result.results.forEach(res => {
             if (res.success && res.deletedCount > 0) {
                 handleImageCountChange(res.productId, imageCounts[res.productId] - res.deletedCount);
@@ -1310,7 +1322,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     Create {selectedHandles.size} Selected
                 </Button>
             )}
-            {selectedHandles.size > 0 && (
+             {hasSelectionWithUnlinkedImages && (
                 <AlertDialog>
                     <AlertDialogTrigger asChild>
                        <Button variant="destructive" disabled={isFixing} className="w-full md:w-auto">
@@ -1405,5 +1417,3 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
-
-    
