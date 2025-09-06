@@ -185,7 +185,7 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
     );
 };
 
-const HANDLES_PER_PAGE = 20;
+const HANDLES_PER_PAGE = 30;
 
 const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag'];
 
@@ -212,7 +212,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [loadingImageCounts, setLoadingImageCounts] = useState<Set<string>>(new Set());
   const [editingMediaFor, setEditingMediaFor] = useState<string | null>(null);
   const [isAutoRunning, setIsAutoRunning] = useState(false);
-  const autoRunStateRef = useRef({ isRunning: false });
   
   const selectAllCheckboxRef = useRef<HTMLButtonElement | null>(null);
 
@@ -406,9 +405,15 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   
   const handleBulkFixAndClean = (handles: Set<string> | null = null) => {
       const handlesToProcess = handles || selectedHandles;
+      if (handlesToProcess.size === 0) {
+        toast({ title: "No Action Taken", description: "No items were selected to fix.", variant: "destructive" });
+        return Promise.resolve();
+      }
+
       const itemsToFix = reportData.filter(item => 
           item.status === 'mismatched' && handlesToProcess.has(getHandle(item))
       );
+
       const productIdsWithUnlinked = Array.from(handlesToProcess).map(handle => {
             const items = filteredGroupedByHandle[handle];
             const productId = items?.[0]?.shopifyProducts?.[0]?.id;
@@ -420,7 +425,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         }).filter((id): id is string => id !== null);
 
         if (itemsToFix.length === 0 && productIdsWithUnlinked.length === 0) {
-            toast({ title: "No Action Taken", description: "Please select products with mismatches or unlinked images.", variant: "destructive" });
+            toast({ title: "No Action Needed", description: "Selected products have no mismatches or unlinked images to clean.", variant: "default" });
             return Promise.resolve();
         }
       
@@ -845,63 +850,57 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   }, [imageCounts, toast, handleImageCountChange]);
 
   const runAutoFix = useCallback(async () => {
-      if (!autoRunStateRef.current.isRunning) {
-          return;
-      }
-      
-      // Get currently visible and fixable items on the page
-      const handlesOnPage = new Set(paginatedHandleKeys);
-      const fixableHandles = Array.from(handlesOnPage).filter(handle => {
-          const items = filteredGroupedByHandle[handle];
-          const hasMismatches = items?.some(item => item.status === 'mismatched' && item.mismatches.length > 0);
-          const hasUnlinked = items?.some(item => {
-              const productId = item.shopifyProducts[0]?.id;
-              const imageCount = productId ? imageCounts[productId] : 0;
-              return productId && imageCount && imageCount > item.shopifyProducts.length;
-          });
-          return hasMismatches || hasUnlinked;
-      });
+    // This function will be called by the useEffect hook
+    const handlesOnPage = new Set(paginatedHandleKeys);
+    const fixableHandles = Array.from(handlesOnPage).filter(handle => {
+        const items = filteredGroupedByHandle[handle];
+        if (!items) return false;
+        const hasMismatches = items.some(item => item.status === 'mismatched' && item.mismatches.length > 0);
+        const hasUnlinked = items.some(item => {
+            const productId = item.shopifyProducts[0]?.id;
+            const imageCount = productId ? imageCounts[productId] : 0;
+            return productId && imageCount && imageCount > item.shopifyProducts.length;
+        });
+        return hasMismatches || hasUnlinked;
+    });
 
-      if (fixableHandles.length === 0) {
-          toast({ title: 'Auto-Fix Complete', description: 'No more fixable items found on this page matching your filters.' });
-          setIsAutoRunning(false);
-          autoRunStateRef.current.isRunning = false;
-          return;
-      }
+    if (fixableHandles.length === 0) {
+        toast({ title: 'Auto-Fix Complete', description: 'No more fixable items found on this page matching your filters.' });
+        setIsAutoRunning(false);
+        return;
+    }
 
-      toast({ title: 'Auto-Fixing Page...', description: `Processing ${fixableHandles.length} items.` });
-      
-      try {
-          await handleBulkFixAndClean(new Set(fixableHandles));
-      } catch(error) {
-          toast({ title: 'Auto-Fix Error', description: 'The process was stopped due to an error.', variant: 'destructive' });
-          setIsAutoRunning(false);
-          autoRunStateRef.current.isRunning = false;
-          return;
-      }
-
-      // Wait 5 seconds, then re-run the check on the same page
-      setTimeout(() => {
-          if (autoRunStateRef.current.isRunning) {
-              runAutoFix(); // Recursive call
-          }
-      }, 5000);
+    toast({ title: 'Auto-Fixing Page...', description: `Processing ${fixableHandles.length} items.` });
+    
+    try {
+        await handleBulkFixAndClean(new Set(fixableHandles));
+        // The loop continues via the useEffect, so no recursive call here.
+    } catch(error) {
+        toast({ title: 'Auto-Fix Error', description: 'The process was stopped due to an error.', variant: 'destructive' });
+        setIsAutoRunning(false);
+    }
   }, [paginatedHandleKeys, filteredGroupedByHandle, handleBulkFixAndClean, imageCounts, toast]);
 
-  useEffect(() => {
-      if (isAutoRunning && !isFixing) {
-          runAutoFix();
-      }
-  }, [isAutoRunning, isFixing, runAutoFix]);
+    useEffect(() => {
+        if (!isAutoRunning || isFixing) {
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            runAutoFix();
+        }, 5000); // Wait 5 seconds before the next run
+
+        return () => clearTimeout(timer);
+    }, [isAutoRunning, isFixing, filteredData, runAutoFix]); // Rerun when data changes
+
 
   const startAutoRun = () => {
       setIsAutoRunning(true);
-      autoRunStateRef.current.isRunning = true;
+      // The useEffect will now pick this up and start the first run.
   };
 
   const stopAutoRun = () => {
       setIsAutoRunning(false);
-      autoRunStateRef.current.isRunning = false;
       toast({ title: 'Auto-Fix Stopped', description: 'The automation process has been stopped.' });
   };
 
@@ -1443,7 +1442,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 </Select>
             )}
             {(hasSelectionWithMismatches || hasSelectionWithUnlinkedImages) && (
-                <Button onClick={() => handleBulkFixAndClean()} disabled={isFixing || isAutoRunning} className="w-full md:w-auto bg-primary hover:bg-primary/90">
+                <Button onClick={() => handleBulkFixAndClean(selectedHandles)} disabled={isFixing || isAutoRunning} className="w-full md:w-auto bg-primary hover:bg-primary/90">
                     <Sparkles className="mr-2 h-4 w-4" />
                     Fix & Clean ({selectedHandles.size})
                 </Button>
@@ -1538,3 +1537,5 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
+
+    
