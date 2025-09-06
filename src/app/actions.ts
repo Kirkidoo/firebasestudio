@@ -802,7 +802,7 @@ export async function getProductImageCounts(productIds: string[]): Promise<Recor
             if (!id || isNaN(parseInt(id, 10))) {
                 throw new Error(`Invalid Product GID for image count: ${gid}`);
             }
-            return id;
+            return parseInt(id, 10);
         });
 
         if (numericProductIds.length === 0) {
@@ -914,19 +914,50 @@ export async function deleteUnlinkedImagesForMultipleProducts(productIds: string
     console.log(`Starting bulk deletion of unlinked images for ${productIds.length} products.`);
     const results = [];
     let totalSuccessCount = 0;
+    let totalDeletedCount = 0;
 
     for (const productId of productIds) {
         const result = await deleteUnlinkedImages(productId);
         results.push({ productId, ...result });
         if(result.success && result.deletedCount > 0) {
             totalSuccessCount++;
+            totalDeletedCount += result.deletedCount;
         }
         await sleep(500); // Add delay to avoid rate limiting
     }
 
-    const message = `Attempted to delete unlinked images for ${productIds.length} products. Successfully processed ${totalSuccessCount}.`;
+    const message = `Bulk operation complete. Processed ${productIds.length} products and deleted a total of ${totalDeletedCount} unlinked images.`;
     console.log(message);
     return { success: totalSuccessCount > 0, message, results };
+}
+
+export async function fixMismatchesAndDeleteUnlinkedImages(
+    itemsToFix: AuditResult[],
+    productIdsWithUnlinked: string[]
+): Promise<{ success: boolean; message: string; fixResults: any[]; deleteResults: any[] }> {
+    console.log(`Starting combined fix & delete operation.`);
+    
+    // Step 1: Fix mismatches
+    const fixResult = await fixMultipleMismatches(itemsToFix);
+    
+    // Step 2: Delete unlinked images
+    const deleteResult = await deleteUnlinkedImagesForMultipleProducts(productIdsWithUnlinked);
+    
+    // Step 3: Combine results and create a summary message
+    const totalFixes = fixResult.results.length;
+    const totalProductsProcessedForDeletion = deleteResult.results.length;
+    const totalImagesDeleted = deleteResult.results.reduce((sum, r) => sum + r.deletedCount, 0);
+
+    const message = `Bulk action complete. Fixed ${totalFixes} mismatches. Processed ${totalProductsProcessedForDeletion} products for unlinked images and deleted ${totalImagesDeleted} images.`;
+
+    revalidatePath('/');
+    
+    return {
+        success: fixResult.success || deleteResult.success,
+        message: message,
+        fixResults: fixResult.results,
+        deleteResults: deleteResult.results,
+    };
 }
       
 
@@ -939,3 +970,6 @@ export async function deleteUnlinkedImagesForMultipleProducts(productIds: string
 
 
 
+
+
+    

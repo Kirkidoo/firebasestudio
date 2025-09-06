@@ -8,11 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearAuditMemory, getCreatedProductHandles, markProductAsCreated } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy, Sparkles } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts, deleteUnlinkedImages, deleteUnlinkedImagesForMultipleProducts } from '@/app/actions';
+import { fixMultipleMismatches, createInShopify, createMultipleInShopify, deleteFromShopify, deleteVariantFromShopify, getProductImageCounts, deleteUnlinkedImages, deleteUnlinkedImagesForMultipleProducts, fixMismatchesAndDeleteUnlinkedImages } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
@@ -204,6 +204,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [editingMissingMedia, setEditingMissingMedia] = useState<string | null>(null);
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
   const [hasSelectionWithUnlinkedImages, setHasSelectionWithUnlinkedImages] = useState(false);
+  const [hasSelectionWithMismatches, setHasSelectionWithMismatches] = useState(false);
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
   const [createdProductHandles, setCreatedProductHandles] = useState<Set<string>>(new Set());
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
@@ -219,6 +220,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setCurrentPage(1);
     setSelectedHandles(new Set());
     setHasSelectionWithUnlinkedImages(false);
+    setHasSelectionWithMismatches(false);
     setFixedMismatches(getFixedMismatches());
     setCreatedProductHandles(getCreatedProductHandles());
     setImageCounts({});
@@ -376,15 +378,51 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     handleBulkFix([itemToFix]);
   };
   
-  const handleFixSelected = () => {
+  const handleBulkFixAndClean = () => {
       const itemsToFix = reportData.filter(item => 
           item.status === 'mismatched' && selectedHandles.has(getHandle(item))
       );
-      if (itemsToFix.length > 0) {
-          handleBulkFix(itemsToFix);
-      } else {
-          toast({ title: "No items to fix", description: "Please select products with mismatches to fix.", variant: "destructive" });
-      }
+      const productIdsWithUnlinked = Array.from(selectedHandles).map(handle => {
+            const items = groupedByHandle[handle];
+            const productId = items?.[0]?.shopifyProducts?.[0]?.id;
+            const imageCount = productId ? imageCounts[productId] : 0;
+            if (productId && imageCount !== undefined && items.length < imageCount) {
+                return productId;
+            }
+            return null;
+        }).filter((id): id is string => id !== null);
+
+        if (itemsToFix.length === 0 && productIdsWithUnlinked.length === 0) {
+            toast({ title: "No Action Taken", description: "Please select products with mismatches or unlinked images.", variant: "destructive" });
+            return;
+        }
+      
+      setShowRefresh(true);
+
+      startTransition(async () => {
+          const result = await fixMismatchesAndDeleteUnlinkedImages(itemsToFix, productIdsWithUnlinked);
+          
+          if (result.success) {
+              toast({ title: 'Bulk Action Complete!', description: result.message });
+
+              const newFixed = new Set(fixedMismatches);
+              result.fixResults.forEach(fixedItem => {
+                  markMismatchAsFixed(fixedItem.sku, fixedItem.field);
+                  newFixed.add(`${fixedItem.sku}-${fixedItem.field}`);
+              });
+              setFixedMismatches(newFixed);
+
+              result.deleteResults.forEach(deleteRes => {
+                  if (deleteRes.success && deleteRes.deletedCount > 0) {
+                      handleImageCountChange(deleteRes.productId, imageCounts[deleteRes.productId] - deleteRes.deletedCount);
+                  }
+              });
+
+          } else {
+              toast({ title: 'Bulk Action Failed', description: result.message || "An error occurred.", variant: 'destructive' });
+          }
+          setSelectedHandles(new Set());
+      });
   };
 
 
@@ -619,7 +657,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     });
   };
 
-  const updateSelectionWithUnlinkedImages = (selection: Set<string>) => {
+  const updateSelectionState = (selection: Set<string>) => {
     const hasUnlinked = Array.from(selection).some(handle => {
         const items = groupedByHandle[handle];
         if (!items) return false;
@@ -628,7 +666,14 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         return imageCount !== undefined && items.length < imageCount;
     });
     setHasSelectionWithUnlinkedImages(hasUnlinked);
+
+    const hasMismatches = Array.from(selection).some(handle => {
+        const items = groupedByHandle[handle];
+        return items?.some(item => item.status === 'mismatched');
+    });
+    setHasSelectionWithMismatches(hasMismatches);
   };
+
 
   const handleSelectHandle = (handle: string, checked: boolean) => {
     const newSelectedHandles = new Set(selectedHandles);
@@ -638,7 +683,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         newSelectedHandles.delete(handle);
     }
     setSelectedHandles(newSelectedHandles);
-    updateSelectionWithUnlinkedImages(newSelectedHandles);
+    updateSelectionState(newSelectedHandles);
   };
   
   const handleSelectAllOnPage = (checked: boolean | 'indeterminate') => {
@@ -649,7 +694,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       paginatedHandleKeys.forEach(handle => newSelectedHandles.delete(handle));
     }
     setSelectedHandles(newSelectedHandles);
-    updateSelectionWithUnlinkedImages(newSelectedHandles);
+    updateSelectionState(newSelectedHandles);
   };
   
   const handleClearAuditMemory = () => {
@@ -763,36 +808,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           }
       });
   }, [imageCounts, toast, handleImageCountChange]);
-
-  const handleBulkDeleteUnlinked = useCallback(() => {
-    const productIdsToDelete = Array.from(selectedHandles).map(handle => {
-        const items = groupedByHandle[handle];
-        const productId = items?.[0]?.shopifyProducts?.[0]?.id;
-        const imageCount = productId ? imageCounts[productId] : 0;
-        if (productId && imageCount !== undefined && items.length < imageCount) {
-            return productId;
-        }
-        return null;
-    }).filter((id): id is string => id !== null);
-
-    if (productIdsToDelete.length === 0) {
-        toast({ title: "No items to fix", description: "Select products with unlinked images to delete them.", variant: "destructive" });
-        return;
-    }
-
-    startTransition(async () => {
-        const result = await deleteUnlinkedImagesForMultipleProducts(productIdsToDelete);
-        toast({ title: "Bulk Delete Complete", description: result.message });
-
-        result.results.forEach(res => {
-            if (res.success && res.deletedCount > 0) {
-                handleImageCountChange(res.productId, imageCounts[res.productId] - res.deletedCount);
-            }
-        });
-        setSelectedHandles(new Set());
-    });
-}, [selectedHandles, groupedByHandle, imageCounts, toast, handleImageCountChange]);
-
 
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full">
@@ -915,7 +930,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                         )}
                                         Manage Media{' '}
                                         {imageCount !== undefined && (
-                                            <span className={cn(imageCount > 1 ? "text-yellow-400 font-bold" : "")}>
+                                            <span className={cn(imageCount > items.length ? "text-yellow-400 font-bold" : "")}>
                                                 ({imageCount})
                                             </span>
                                         )}
@@ -1310,10 +1325,10 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     </SelectContent>
                 </Select>
             )}
-            {filter === 'mismatched' && selectedHandles.size > 0 && (
-                <Button onClick={handleFixSelected} disabled={isFixing} className="w-full md:w-auto">
-                    <Bot className="mr-2 h-4 w-4" />
-                    Fix {selectedHandles.size} Selected
+            {(hasSelectionWithMismatches || hasSelectionWithUnlinkedImages) && (
+                <Button onClick={handleBulkFixAndClean} disabled={isFixing} className="w-full md:w-auto bg-primary hover:bg-primary/90">
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Fix & Clean ({selectedHandles.size})
                 </Button>
             )}
             {filter === 'missing_in_shopify' && selectedHandles.size > 0 && (
@@ -1321,30 +1336,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     <PlusCircle className="mr-2 h-4 w-4" />
                     Create {selectedHandles.size} Selected
                 </Button>
-            )}
-             {hasSelectionWithUnlinkedImages && (
-                <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                       <Button variant="destructive" disabled={isFixing} className="w-full md:w-auto">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete Unlinked ({selectedHandles.size})
-                        </Button>
-                    </AlertDialogTrigger>
-                     <AlertDialogContent>
-                        <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Unlinked Images?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                                This will attempt to delete unlinked images for {selectedHandles.size} selected products. This action cannot be undone.
-                            </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={handleBulkDeleteUnlinked} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                Yes, Delete Unlinked
-                            </AlertDialogAction>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
             )}
         </div>
 
@@ -1417,3 +1408,6 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
+
+
+    
