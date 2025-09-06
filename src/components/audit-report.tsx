@@ -185,7 +185,7 @@ const ProductDetails = ({ product }: { product: Product | null }) => {
     );
 };
 
-const HANDLES_PER_PAGE = 30;
+const HANDLES_PER_PAGE = 20;
 
 const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = ['name', 'price', 'inventory', 'h1_tag', 'duplicate_in_shopify', 'heavy_product_template', 'heavy_product_flag'];
 
