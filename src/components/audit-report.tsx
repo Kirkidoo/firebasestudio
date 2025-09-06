@@ -200,6 +200,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [mismatchFilters, setMismatchFilters] = useState<Set<MismatchDetail['field']>>(new Set());
+  const [filterSingleSku, setFilterSingleSku] = useState(false);
   const [selectedVendor, setSelectedVendor] = useState<string>('all');
   const [editingMissingMedia, setEditingMissingMedia] = useState<string | null>(null);
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
@@ -236,6 +237,17 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         }
     });
     return ['all', ...Array.from(vendors).sort()];
+  }, [data]);
+
+  const groupedByHandle = useMemo(() => {
+      return data.reduce((acc, item) => {
+        const handle = getHandle(item);
+        if (!acc[handle]) {
+          acc[handle] = [];
+        }
+        acc[handle].push(item);
+        return acc;
+      }, {} as Record<string, AuditResult[]>);
   }, [data]);
 
 
@@ -297,10 +309,19 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         results = results.filter(item => item.shopifyProducts[0]?.vendor === selectedVendor);
     }
 
-    return results;
-  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor, fixedMismatches, createdProductHandles]);
+    // 4. Apply single SKU filter
+    if (filterSingleSku) {
+        results = results.filter(item => {
+            const handle = getHandle(item);
+            // This check ensures we only keep items whose handle group has exactly one member.
+            return groupedByHandle[handle] && groupedByHandle[handle].length === 1;
+        });
+    }
 
-  const groupedByHandle = useMemo(() => {
+    return results;
+  }, [reportData, filter, searchTerm, mismatchFilters, selectedVendor, fixedMismatches, createdProductHandles, filterSingleSku, groupedByHandle]);
+
+  const filteredGroupedByHandle = useMemo(() => {
       return filteredData.reduce((acc, item) => {
         const handle = getHandle(item);
         if (!acc[handle]) {
@@ -327,7 +348,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   }, [filteredData, filter]);
 
 
-  const handleKeys = filter === 'duplicate_in_shopify' ? Object.keys(groupedBySku) : Object.keys(groupedByHandle);
+  const handleKeys = filter === 'duplicate_in_shopify' ? Object.keys(groupedBySku) : Object.keys(filteredGroupedByHandle);
   const totalPages = Math.ceil(handleKeys.length / HANDLES_PER_PAGE);
   const paginatedHandleKeys = handleKeys.slice(
       (currentPage - 1) * HANDLES_PER_PAGE,
@@ -383,7 +404,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
           item.status === 'mismatched' && selectedHandles.has(getHandle(item))
       );
       const productIdsWithUnlinked = Array.from(selectedHandles).map(handle => {
-            const items = groupedByHandle[handle];
+            const items = filteredGroupedByHandle[handle];
             const productId = items?.[0]?.shopifyProducts?.[0]?.id;
             const imageCount = productId ? imageCounts[productId] : 0;
             if (productId && imageCount !== undefined && items.length < imageCount) {
@@ -659,7 +680,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
   const updateSelectionState = (selection: Set<string>) => {
     const hasUnlinked = Array.from(selection).some(handle => {
-        const items = groupedByHandle[handle];
+        const items = filteredGroupedByHandle[handle];
         if (!items) return false;
         const productId = items[0]?.shopifyProducts[0]?.id;
         const imageCount = productId ? imageCounts[productId] : undefined;
@@ -668,7 +689,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     setHasSelectionWithUnlinkedImages(hasUnlinked);
 
     const hasMismatches = Array.from(selection).some(handle => {
-        const items = groupedByHandle[handle];
+        const items = filteredGroupedByHandle[handle];
         return items?.some(item => item.status === 'mismatched');
     });
     setHasSelectionWithMismatches(hasMismatches);
@@ -741,7 +762,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             const productIdsToFetch: string[] = [];
 
             for (const handle of paginatedHandleKeys) {
-                const items = groupedByHandle[handle];
+                const items = filteredGroupedByHandle[handle];
                 const productId = items?.[0]?.shopifyProducts?.[0]?.id;
                 if (productId && imageCounts[productId] === undefined && !loadingImageCounts.has(productId)) {
                     productIdsToFetch.push(productId);
@@ -776,7 +797,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         };
 
         fetchCounts();
-    }, [paginatedHandleKeys, groupedByHandle, toast, imageCounts, loadingImageCounts]);
+    }, [paginatedHandleKeys, filteredGroupedByHandle, toast, imageCounts, loadingImageCounts]);
 
 
   const { isAllOnPageSelected, isSomeOnPageSelected } = useMemo(() => {
@@ -812,7 +833,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full">
         {paginatedHandleKeys.map((handle) => {
-             const items = groupedByHandle[handle];
+             const items = filteredGroupedByHandle[handle];
              const productTitle = items[0].csvProducts[0]?.name || items[0].shopifyProducts[0]?.name || handle;
              const hasMismatch = items.some(i => i.status === 'mismatched' && i.mismatches.length > 0);
              const isMissing = items.every(i => i.status === 'missing_in_shopify');
@@ -1276,6 +1297,20 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     disabled={isFixing}
                 />
             </div>
+             <div className="flex items-center space-x-2">
+                <Checkbox
+                    id="single-sku-filter"
+                    checked={filterSingleSku}
+                    onCheckedChange={(checked) => {
+                        setCurrentPage(1);
+                        setFilterSingleSku(!!checked);
+                    }}
+                />
+                <Label htmlFor="single-sku-filter" className="font-normal whitespace-nowrap">
+                    Show only single SKU products
+                </Label>
+            </div>
+            <Separator orientation="vertical" className="h-auto hidden md:block" />
             {filter === 'mismatched' && (
                  <Popover>
                     <PopoverTrigger asChild>
