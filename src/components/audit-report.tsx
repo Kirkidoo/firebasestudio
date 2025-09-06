@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { downloadCsv, markMismatchAsFixed, getFixedMismatches, clearAuditMemory, getCreatedProductHandles, markProductAsCreated } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy, Sparkles } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PlusCircle, ArrowLeft, Download, XCircle, Wrench, Siren, Loader2, RefreshCw, Text, DollarSign, List, FileText, Eye, Trash2, Search, Image as ImageIcon, FileWarning, Bot, Eraser, Check, Link, Copy, Sparkles, SquarePlay, SquareX } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger, AccordionHeader } from '@/components/ui/accordion';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -211,6 +211,8 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
   const [loadingImageCounts, setLoadingImageCounts] = useState<Set<string>>(new Set());
   const [editingMediaFor, setEditingMediaFor] = useState<string | null>(null);
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
+  const autoRunStateRef = useRef({ isRunning: false });
   
   const selectAllCheckboxRef = useRef<HTMLButtonElement | null>(null);
 
@@ -374,21 +376,24 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
   const handleBulkFix = (itemsToFix: AuditResult[]) => {
       setShowRefresh(true);
       
-      startTransition(async () => {
-          const result = await fixMultipleMismatches(itemsToFix);
-           if (result.success && result.results.length > 0) {
-              toast({ title: 'Bulk Fix Complete!', description: result.message });
-              const newFixed = new Set(fixedMismatches);
-              result.results.forEach(fixedItem => {
-                markMismatchAsFixed(fixedItem.sku, fixedItem.field);
-                newFixed.add(`${fixedItem.sku}-${fixedItem.field}`);
-              });
-              setFixedMismatches(newFixed);
-          } else {
-              toast({ title: 'Bulk Fix Failed', description: result.message || "No items were fixed.", variant: 'destructive' });
-          }
-          setSelectedHandles(new Set());
-      });
+      return new Promise<void>((resolve) => {
+        startTransition(async () => {
+            const result = await fixMultipleMismatches(itemsToFix);
+             if (result.success && result.results.length > 0) {
+                toast({ title: 'Bulk Fix Complete!', description: result.message });
+                const newFixed = new Set(fixedMismatches);
+                result.results.forEach(fixedItem => {
+                  markMismatchAsFixed(fixedItem.sku, fixedItem.field);
+                  newFixed.add(`${fixedItem.sku}-${fixedItem.field}`);
+                });
+                setFixedMismatches(newFixed);
+            } else {
+                toast({ title: 'Bulk Fix Failed', description: result.message || "No items were fixed.", variant: 'destructive' });
+            }
+            setSelectedHandles(new Set());
+            resolve();
+        });
+      })
   }
 
   const handleFixSingleMismatch = (item: AuditResult, fixType: MismatchDetail['field']) => {
@@ -399,11 +404,12 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     handleBulkFix([itemToFix]);
   };
   
-  const handleBulkFixAndClean = () => {
+  const handleBulkFixAndClean = (handles: Set<string> | null = null) => {
+      const handlesToProcess = handles || selectedHandles;
       const itemsToFix = reportData.filter(item => 
-          item.status === 'mismatched' && selectedHandles.has(getHandle(item))
+          item.status === 'mismatched' && handlesToProcess.has(getHandle(item))
       );
-      const productIdsWithUnlinked = Array.from(selectedHandles).map(handle => {
+      const productIdsWithUnlinked = Array.from(handlesToProcess).map(handle => {
             const items = filteredGroupedByHandle[handle];
             const productId = items?.[0]?.shopifyProducts?.[0]?.id;
             const imageCount = productId ? imageCounts[productId] : 0;
@@ -415,34 +421,42 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
         if (itemsToFix.length === 0 && productIdsWithUnlinked.length === 0) {
             toast({ title: "No Action Taken", description: "Please select products with mismatches or unlinked images.", variant: "destructive" });
-            return;
+            return Promise.resolve();
         }
       
       setShowRefresh(true);
 
-      startTransition(async () => {
-          const result = await fixMismatchesAndDeleteUnlinkedImages(itemsToFix, productIdsWithUnlinked);
-          
-          if (result.success) {
-              toast({ title: 'Bulk Action Complete!', description: result.message });
+      return new Promise<void>((resolve, reject) => {
+        startTransition(async () => {
+            try {
+                const result = await fixMismatchesAndDeleteUnlinkedImages(itemsToFix, productIdsWithUnlinked);
+                
+                if (result.success) {
+                    toast({ title: 'Bulk Action Complete!', description: result.message });
 
-              const newFixed = new Set(fixedMismatches);
-              result.fixResults.forEach(fixedItem => {
-                  markMismatchAsFixed(fixedItem.sku, fixedItem.field);
-                  newFixed.add(`${fixedItem.sku}-${fixedItem.field}`);
-              });
-              setFixedMismatches(newFixed);
+                    const newFixed = new Set(fixedMismatches);
+                    result.fixResults.forEach(fixedItem => {
+                        markMismatchAsFixed(fixedItem.sku, fixedItem.field);
+                        newFixed.add(`${fixedItem.sku}-${fixedItem.field}`);
+                    });
+                    setFixedMismatches(newFixed);
 
-              result.deleteResults.forEach(deleteRes => {
-                  if (deleteRes.success && deleteRes.deletedCount > 0) {
-                      handleImageCountChange(deleteRes.productId, imageCounts[deleteRes.productId] - deleteRes.deletedCount);
-                  }
-              });
+                    result.deleteResults.forEach(deleteRes => {
+                        if (deleteRes.success && deleteRes.deletedCount > 0) {
+                            handleImageCountChange(deleteRes.productId, imageCounts[deleteRes.productId] - deleteRes.deletedCount);
+                        }
+                    });
 
-          } else {
-              toast({ title: 'Bulk Action Failed', description: result.message || "An error occurred.", variant: 'destructive' });
-          }
-          setSelectedHandles(new Set());
+                } else {
+                    toast({ title: 'Bulk Action Failed', description: result.message || "An error occurred.", variant: 'destructive' });
+                }
+                setSelectedHandles(new Set());
+                resolve();
+            } catch (error) {
+                toast({ title: 'Bulk Action Errored', description: error instanceof Error ? error.message : "An unknown error occurred.", variant: 'destructive' });
+                reject(error);
+            }
+        });
       });
   };
 
@@ -830,6 +844,57 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       });
   }, [imageCounts, toast, handleImageCountChange]);
 
+  const runAutoFix = useCallback(async () => {
+    if (!autoRunStateRef.current.isRunning) {
+        return;
+    }
+    
+    const handlesOnPage = new Set(paginatedHandleKeys);
+    if (handlesOnPage.size === 0) {
+        toast({ title: 'Auto-Fix Complete', description: 'No more items found matching your filters.' });
+        setIsAutoRunning(false);
+        autoRunStateRef.current.isRunning = false;
+        return;
+    }
+
+    toast({ title: 'Auto-Fixing Page...', description: `Processing ${handlesOnPage.size} items.` });
+    
+    try {
+        await handleBulkFixAndClean(handlesOnPage);
+    } catch(error) {
+        toast({ title: 'Auto-Fix Error', description: 'The process was stopped due to an error.', variant: 'destructive' });
+        setIsAutoRunning(false);
+        autoRunStateRef.current.isRunning = false;
+        return;
+    }
+
+    // Wait 2 seconds, then refresh data
+    setTimeout(() => {
+        if (autoRunStateRef.current.isRunning) {
+            onRefresh();
+        }
+    }, 2000);
+  }, [paginatedHandleKeys, handleBulkFixAndClean, onRefresh, toast]);
+
+
+  useEffect(() => {
+    if (isAutoRunning && paginatedHandleKeys.length > 0 && !isFixing) {
+        runAutoFix();
+    }
+  }, [isAutoRunning, paginatedHandleKeys, isFixing, runAutoFix]);
+
+  const startAutoRun = () => {
+    setIsAutoRunning(true);
+    autoRunStateRef.current.isRunning = true;
+  };
+
+  const stopAutoRun = () => {
+    setIsAutoRunning(false);
+    autoRunStateRef.current.isRunning = false;
+    toast({ title: 'Auto-Fix Stopped', description: 'The automation process has been stopped.' });
+  };
+
+
   const renderRegularReport = () => (
     <Accordion type="single" collapsible className="w-full">
         {paginatedHandleKeys.map((handle) => {
@@ -1212,10 +1277,16 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 <code className="ml-2 text-primary bg-primary/10 px-2 py-1 rounded-md">{fileName}</code>
             </div>
           </div>
-          { isFixing && 
+          { isFixing && !isAutoRunning &&
             <div className="flex items-center gap-2 text-sm text-muted-foreground p-2 rounded-md bg-card-foreground/5">
               <Loader2 className="h-4 w-4 animate-spin"/>
               Applying changes...
+            </div>
+          }
+          { isAutoRunning &&
+             <div className="flex items-center gap-2 text-sm text-green-500 p-2 rounded-md bg-green-500/10 border border-green-500/20">
+              <Loader2 className="h-4 w-4 animate-spin"/>
+              Auto-Fix is running...
             </div>
           }
         </div>
@@ -1270,16 +1341,16 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 if (count === 0 && f !== 'all') return null;
 
                 return (
-                    <Button key={f} variant={filter === f ? 'default' : 'outline'} size="sm" onClick={() => handleFilterChange(f)} disabled={isFixing}>
+                    <Button key={f} variant={filter === f ? 'default' : 'outline'} size="sm" onClick={() => handleFilterChange(f)} disabled={isFixing || isAutoRunning}>
                        {f === 'all' ? 'All Items' : config.text} ({count})
                     </Button>
                 )
              })}
           </div>
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={onReset} disabled={isFixing}><ArrowLeft className="mr-2 h-4 w-4" />New Audit</Button>
-            {showRefresh && <Button variant="secondary" onClick={onRefresh} disabled={isFixing}><RefreshCw className="mr-2 h-4 w-4" />Refresh Data</Button>}
-            <Button onClick={handleDownload} disabled={isFixing}><Download className="mr-2 h-4 w-4" />Download Report</Button>
+            <Button variant="ghost" onClick={onReset} disabled={isFixing || isAutoRunning}><ArrowLeft className="mr-2 h-4 w-4" />New Audit</Button>
+            {showRefresh && <Button variant="secondary" onClick={onRefresh} disabled={isFixing || isAutoRunning}><RefreshCw className="mr-2 h-4 w-4" />Refresh Data</Button>}
+            <Button onClick={handleDownload} disabled={isFixing || isAutoRunning}><Download className="mr-2 h-4 w-4" />Download Report</Button>
           </div>
         </div>
 
@@ -1294,7 +1365,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         setSearchTerm(e.target.value);
                     }}
                     className="pl-10"
-                    disabled={isFixing}
+                    disabled={isFixing || isAutoRunning}
                 />
             </div>
              <div className="flex items-center space-x-2">
@@ -1305,6 +1376,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         setCurrentPage(1);
                         setFilterSingleSku(!!checked);
                     }}
+                    disabled={isFixing || isAutoRunning}
                 />
                 <Label htmlFor="single-sku-filter" className="font-normal whitespace-nowrap">
                     Show only single SKU products
@@ -1314,7 +1386,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
             {filter === 'mismatched' && (
                  <Popover>
                     <PopoverTrigger asChild>
-                        <Button variant="outline" className="w-full md:w-auto">
+                        <Button variant="outline" className="w-full md:w-auto" disabled={isFixing || isAutoRunning}>
                             <List className="mr-2 h-4 w-4" />
                             Filter Mismatches ({mismatchFilters.size > 0 ? `${mismatchFilters.size} selected` : 'All'})
                         </Button>
@@ -1347,7 +1419,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 </Popover>
             )}
             {filter === 'not_in_csv' && (
-                <Select value={selectedVendor} onValueChange={(value) => {setCurrentPage(1); setSelectedVendor(value)}}>
+                <Select value={selectedVendor} onValueChange={(value) => {setCurrentPage(1); setSelectedVendor(value)}} disabled={isFixing || isAutoRunning}>
                     <SelectTrigger className="w-full md:w-[200px]">
                         <SelectValue placeholder="Filter by vendor..." />
                     </SelectTrigger>
@@ -1361,15 +1433,27 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 </Select>
             )}
             {(hasSelectionWithMismatches || hasSelectionWithUnlinkedImages) && (
-                <Button onClick={handleBulkFixAndClean} disabled={isFixing} className="w-full md:w-auto bg-primary hover:bg-primary/90">
+                <Button onClick={() => handleBulkFixAndClean()} disabled={isFixing || isAutoRunning} className="w-full md:w-auto bg-primary hover:bg-primary/90">
                     <Sparkles className="mr-2 h-4 w-4" />
                     Fix & Clean ({selectedHandles.size})
                 </Button>
             )}
             {filter === 'missing_in_shopify' && selectedHandles.size > 0 && (
-                <Button onClick={handleCreateSelected} disabled={isFixing} className="w-full md:w-auto">
+                <Button onClick={handleCreateSelected} disabled={isFixing || isAutoRunning} className="w-full md:w-auto">
                     <PlusCircle className="mr-2 h-4 w-4" />
                     Create {selectedHandles.size} Selected
+                </Button>
+            )}
+            {filter === 'mismatched' && !isAutoRunning && (
+                <Button onClick={startAutoRun} disabled={isFixing || isAutoRunning} className="w-full md:w-auto bg-green-600 hover:bg-green-600/90 text-white">
+                    <SquarePlay className="mr-2 h-4 w-4" />
+                    Auto Fix Page
+                </Button>
+            )}
+            {isAutoRunning && (
+                 <Button onClick={stopAutoRun} disabled={isFixing} variant="destructive" className="w-full md:w-auto">
+                    <SquareX className="mr-2 h-4 w-4" />
+                    Stop
                 </Button>
             )}
         </div>
@@ -1387,6 +1471,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 }
               }}
               checked={isSomeOnPageSelected ? 'indeterminate' : isAllOnPageSelected}
+              disabled={isAutoRunning}
             />
             <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
               Select all on this page ({paginatedHandleKeys.length} items)
@@ -1416,7 +1501,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     variant="outline"
                     size="sm"
                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1 || isFixing}
+                    disabled={currentPage === 1 || isFixing || isAutoRunning}
                 >
                     Previous
                 </Button>
@@ -1424,7 +1509,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     variant="outline"
                     size="sm"
                     onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages || isFixing}
+                    disabled={currentPage === totalPages || isFixing || isAutoRunning}
                 >
                     Next
                 </Button>
@@ -1446,3 +1531,4 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
 
 
     
+

@@ -341,22 +341,7 @@ export async function runAuditComparison(csvProducts: Product[], shopifyProducts
     });
     console.log('Audit comparison complete. Matched:', matchedCount, 'Summary:', summary);
 
-    // This is a list of all SKUs that have been identified as duplicates in Shopify.
-    const duplicateSkuSet = new Set(
-      report.filter(r => r.status === 'duplicate_in_shopify').map(r => r.sku)
-    );
-
-    // Filter out 'matched' items unless they are part of a duplicate issue.
-    const finalReport = report.filter(item => {
-        if (item.status === 'matched') {
-            // If the item is matched, only keep it if its SKU is in our set of duplicates.
-            return duplicateSkuSet.has(item.sku);
-        }
-        // Keep all other non-matched items.
-        return true;
-    });
-
-    return { report: finalReport, summary: { ...summary, matched: matchedCount } };
+    return { report, summary: { ...summary, matched: matchedCount } };
 }
 
 
@@ -387,7 +372,21 @@ export async function runAudit(csvFileName: string, ftpData: FormData): Promise<
     .filter(d => d.status === 'duplicate_in_shopify')
     .map(d => ({ sku: d.sku, count: d.shopifyProducts.length }));
   
-  const finalReport = report.filter(item => item.status !== 'matched' && item.status !== 'duplicate_in_shopify');
+  // This is a list of all SKUs that have been identified as duplicates in Shopify.
+  const duplicateSkuSet = new Set(
+    report.filter(r => r.status === 'duplicate_in_shopify').map(r => r.sku)
+  );
+
+  // Filter out 'matched' items unless they are part of a duplicate issue.
+  const finalReport = report.filter(item => {
+      if (item.status === 'matched') {
+          // If the item is matched, only keep it if its SKU is in our set of duplicates.
+          return duplicateSkuSet.has(item.sku);
+      }
+      // Keep all other non-matched items.
+      return true;
+  });
+
   return { report: finalReport, summary, duplicates: duplicatesForCard };
 }
 
