@@ -465,6 +465,46 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
       });
   };
 
+    const handleBulkDeleteUnlinked = (handles: Set<string> | null = null) => {
+        const handlesToProcess = handles || selectedHandles;
+        if (handlesToProcess.size === 0) {
+            toast({ title: "No Action Taken", description: "No items were selected.", variant: "destructive" });
+            return;
+        }
+
+        const productIdsWithUnlinked = Array.from(handlesToProcess).map(handle => {
+            const items = filteredGroupedByHandle[handle];
+            const productId = items?.[0]?.shopifyProducts?.[0]?.id;
+            const imageCount = productId ? imageCounts[productId] : undefined;
+            if (productId && imageCount !== undefined && items.length < imageCount) {
+                return productId;
+            }
+            return null;
+        }).filter((id): id is string => id !== null);
+
+        if (productIdsWithUnlinked.length === 0) {
+            toast({ title: "No Action Needed", description: "Selected products have no unlinked images to clean." });
+            return;
+        }
+
+        setShowRefresh(true);
+
+        startTransition(async () => {
+            const result = await deleteUnlinkedImagesForMultipleProducts(productIdsWithUnlinked);
+            if (result.success) {
+                toast({ title: 'Deletion Complete!', description: result.message });
+                result.results.forEach(deleteRes => {
+                    if (deleteRes.success && deleteRes.deletedCount > 0) {
+                        handleImageCountChange(deleteRes.productId, imageCounts[deleteRes.productId] - deleteRes.deletedCount);
+                    }
+                });
+            } else {
+                toast({ title: 'Deletion Failed', description: result.message || "An error occurred.", variant: 'destructive' });
+            }
+            setSelectedHandles(new Set());
+        });
+    };
+
 
   const handleCreate = (item: AuditResult) => {
     const productToCreate = item.csvProducts[0];
@@ -1440,10 +1480,16 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                     </SelectContent>
                 </Select>
             )}
-            {(hasSelectionWithMismatches || hasSelectionWithUnlinkedImages) && (
+            {hasSelectionWithMismatches && hasSelectionWithUnlinkedImages && (
                 <Button onClick={() => handleBulkFixAndClean(selectedHandles)} disabled={isFixing || isAutoRunning} className="w-full md:w-auto bg-primary hover:bg-primary/90">
                     <Sparkles className="mr-2 h-4 w-4" />
                     Fix & Clean ({selectedHandles.size})
+                </Button>
+            )}
+            {hasSelectionWithUnlinkedImages && (
+                 <Button variant="destructive" onClick={() => handleBulkDeleteUnlinked(selectedHandles)} disabled={isFixing || isAutoRunning} className="w-full md:w-auto">
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete Unlinked ({selectedHandles.size})
                 </Button>
             )}
             {filter === 'missing_in_shopify' && selectedHandles.size > 0 && (
@@ -1536,5 +1582,3 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
     </>
   );
 }
-
-    
