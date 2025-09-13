@@ -148,17 +148,15 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
             const idsToDelete = Array.from(selectedImageIds);
             let successfullyDeletedIds: number[] = [];
             
-            const results = await Promise.all(
-                idsToDelete.map(async (id) => {
-                    const res = await deleteImage(productId, id);
-                    if (res.success) {
-                        successfullyDeletedIds.push(id);
-                    }
-                    return res;
-                })
-            );
+            for (const id of idsToDelete) {
+                const res = await deleteImage(productId, id);
+                if (res.success) {
+                    successfullyDeletedIds.push(id);
+                }
+                await new Promise(resolve => setTimeout(resolve, 600)); // Delay
+            }
 
-            const failedCount = results.length - successfullyDeletedIds.length;
+            const failedCount = idsToDelete.length - successfullyDeletedIds.length;
             if (failedCount > 0) {
                  toast({ title: 'Some Deletions Failed', description: `Could not delete ${failedCount} images. Please try again.`, variant: 'destructive' });
             } else {
@@ -206,26 +204,36 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
 
     const handleBulkAssign = () => {
         const imageId = parseInt(bulkAssignImageId);
-        if (!imageId || !bulkAssignOption || !bulkAssignValue) {
-            toast({ title: 'Incomplete Selection', description: 'Please select an image, an option, and a value.', variant: 'destructive' });
+        if (!imageId || !bulkAssignOption) {
+            toast({ title: 'Incomplete Selection', description: 'Please select an image and an option.', variant: 'destructive' });
             return;
         }
         
-        let optionKeyToMatch: 'option1Value' | 'option2Value' | 'option3Value' | null = null;
-        const firstVariantWithOptions = variants.find(v => v.option1Name || v.option2Name || v.option3Name);
-        if(firstVariantWithOptions?.option1Name === bulkAssignOption) optionKeyToMatch = 'option1Value';
-        else if(firstVariantWithOptions?.option2Name === bulkAssignOption) optionKeyToMatch = 'option2Value';
-        else if(firstVariantWithOptions?.option3Name === bulkAssignOption) optionKeyToMatch = 'option3Value';
-        else if (bulkAssignOption === 'Option1') optionKeyToMatch = 'option1Value';
-        else if (bulkAssignOption === 'Option2') optionKeyToMatch = 'option2Value';
-        else if (bulkAssignOption === 'Option3') optionKeyToMatch = 'option3Value';
+        let variantsToUpdate: Partial<Product>[] = [];
 
-        if (!optionKeyToMatch) {
-            toast({ title: 'Option matching error', description: 'Could not determine which option to match on.', variant: 'destructive' });
-            return;
+        if (bulkAssignOption === 'All Variants') {
+            variantsToUpdate = [...variants];
+        } else {
+            if (!bulkAssignValue) {
+                toast({ title: 'Incomplete Selection', description: 'Please select a value to match.', variant: 'destructive' });
+                return;
+            }
+
+            let optionKeyToMatch: 'option1Value' | 'option2Value' | 'option3Value' | null = null;
+            const firstVariantWithOptions = variants.find(v => v.option1Name || v.option2Name || v.option3Name);
+            if(firstVariantWithOptions?.option1Name === bulkAssignOption) optionKeyToMatch = 'option1Value';
+            else if(firstVariantWithOptions?.option2Name === bulkAssignOption) optionKeyToMatch = 'option2Value';
+            else if(firstVariantWithOptions?.option3Name === bulkAssignOption) optionKeyToMatch = 'option3Value';
+            else if (bulkAssignOption === 'Option1') optionKeyToMatch = 'option1Value';
+            else if (bulkAssignOption === 'Option2') optionKeyToMatch = 'option2Value';
+            else if (bulkAssignOption === 'Option3') optionKeyToMatch = 'option3Value';
+
+            if (!optionKeyToMatch) {
+                toast({ title: 'Option matching error', description: 'Could not determine which option to match on.', variant: 'destructive' });
+                return;
+            }
+            variantsToUpdate = variants.filter(v => v[optionKeyToMatch as keyof typeof v] === bulkAssignValue);
         }
-
-        const variantsToUpdate = variants.filter(v => v[optionKeyToMatch as keyof typeof v] === bulkAssignValue);
         
         if (variantsToUpdate.length === 0) {
             toast({ title: 'No variants found', description: 'No variants match the selected criteria.', variant: 'destructive' });
@@ -234,7 +242,7 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
         
         const originalVariants = [...variants];
         const newVariants = variants.map(v => {
-            if (v[optionKeyToMatch as keyof typeof v] === bulkAssignValue) {
+             if (variantsToUpdate.some(vtu => vtu.variantId === v.variantId)) {
                 return { ...v, imageId: imageId };
             }
             return v;
@@ -300,7 +308,7 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                     <DialogContent>
                                         <DialogHeader>
                                             <DialogTitle>Bulk Assign Image</DialogTitle>
-                                            <DialogDescription>Assign a single image to multiple variants based on an option like color or size.</DialogDescription>
+                                            <DialogDescription>Assign a single image to multiple variants based on an option or to all variants.</DialogDescription>
                                         </DialogHeader>
                                         <div className="space-y-4 py-4">
                                             <div className="space-y-2">
@@ -320,29 +328,32 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                                 </Select>
                                             </div>
                                             <div className="space-y-2">
-                                                <Label>2. Select Option to Group By</Label>
+                                                <Label>2. Select Target Variants</Label>
                                                 <Select value={bulkAssignOption} onValueChange={val => { setBulkAssignOption(val); setBulkAssignValue(''); }}>
-                                                    <SelectTrigger><SelectValue placeholder="Select an option..." /></SelectTrigger>
+                                                    <SelectTrigger><SelectValue placeholder="Group by option or select all..." /></SelectTrigger>
                                                     <SelectContent>
+                                                        <SelectItem value="All Variants">All Variants</SelectItem>
                                                         {[...availableOptions.keys()].map(optionName => (
                                                             <SelectItem key={optionName} value={optionName}>{optionName}</SelectItem>
                                                         ))}
                                                     </SelectContent>
                                                 </Select>
                                             </div>
-                                            <div className="space-y-2">
-                                                <Label>3. Select Value to Match</Label>
-                                                <Select value={bulkAssignValue} onValueChange={setBulkAssignValue} disabled={!bulkAssignOption}>
-                                                    <SelectTrigger><SelectValue placeholder="Select a value..." /></SelectTrigger>
-                                                    <SelectContent>
-                                                        {bulkAssignOption && availableOptions.get(bulkAssignOption)?.size &&
-                                                            Array.from(availableOptions.get(bulkAssignOption)!).map(value => (
-                                                                <SelectItem key={value} value={value}>{value}</SelectItem>
-                                                            ))
-                                                        }
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
+                                            {bulkAssignOption && bulkAssignOption !== 'All Variants' && (
+                                                <div className="space-y-2">
+                                                    <Label>3. Select Value to Match</Label>
+                                                    <Select value={bulkAssignValue} onValueChange={setBulkAssignValue}>
+                                                        <SelectTrigger><SelectValue placeholder="Select a value..." /></SelectTrigger>
+                                                        <SelectContent>
+                                                            {availableOptions.get(bulkAssignOption)?.size &&
+                                                                Array.from(availableOptions.get(bulkAssignOption)!).map(value => (
+                                                                    <SelectItem key={value} value={value}>{value}</SelectItem>
+                                                                ))
+                                                            }
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            )}
                                         </div>
                                         <DialogFooter>
                                             <Button variant="outline" onClick={() => setIsBulkAssignDialogOpen(false)}>Cancel</Button>

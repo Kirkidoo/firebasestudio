@@ -127,19 +127,30 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
     }, [variants]);
 
     const handleBulkAssign = () => {
-        if (!bulkAssignImageUrl || !bulkAssignOption || !bulkAssignValue) {
-            toast({ title: 'Incomplete Selection', description: 'Please select an image, an option, and a value.', variant: 'destructive' });
+        if (!bulkAssignImageUrl || !bulkAssignOption) {
+            toast({ title: 'Incomplete Selection', description: 'Please select an image and an option.', variant: 'destructive' });
             return;
         }
 
-        let optionKey: keyof Product | null = null;
-        if (variants[0]?.option1Name === bulkAssignOption) optionKey = 'option1Value';
-        else if (variants[0]?.option2Name === bulkAssignOption) optionKey = 'option2Value';
-        else if (variants[0]?.option3Name === bulkAssignOption) optionKey = 'option3Value';
-        
-        if (!optionKey) return;
-        
-        const variantsToUpdate = localVariants.filter(v => v[optionKey] === bulkAssignValue);
+        let variantsToUpdate: Product[] = [];
+
+        if (bulkAssignOption === 'All Variants') {
+            variantsToUpdate = [...localVariants];
+        } else {
+            if (!bulkAssignValue) {
+                toast({ title: 'Incomplete Selection', description: 'Please select a value to match.', variant: 'destructive' });
+                return;
+            }
+
+            let optionKey: keyof Product | null = null;
+            if (variants[0]?.option1Name === bulkAssignOption) optionKey = 'option1Value';
+            else if (variants[0]?.option2Name === bulkAssignOption) optionKey = 'option2Value';
+            else if (variants[0]?.option3Name === bulkAssignOption) optionKey = 'option3Value';
+            
+            if (!optionKey) return;
+            
+            variantsToUpdate = localVariants.filter(v => v[optionKey] === bulkAssignValue);
+        }
         
         if (variantsToUpdate.length === 0) {
             toast({ title: 'No variants found', description: 'No variants match the selected criteria.', variant: 'destructive' });
@@ -147,7 +158,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
         }
 
         setLocalVariants(prev => prev.map(v => {
-            if (v[optionKey as keyof Product] === bulkAssignValue) {
+            if (variantsToUpdate.some(vtu => vtu.sku === v.sku)) {
                 return { ...v, mediaUrl: bulkAssignImageUrl };
             }
             return v;
@@ -196,7 +207,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                                 <DialogContent>
                                     <DialogHeader>
                                         <DialogTitle>Bulk Assign Image</DialogTitle>
-                                        <DialogDescription>Assign a single image to multiple variants based on an option.</DialogDescription>
+                                        <DialogDescription>Assign a single image to multiple variants based on an option or to all variants.</DialogDescription>
                                     </DialogHeader>
                                     <div className="space-y-4 py-4">
                                         <div className="space-y-2">
@@ -216,29 +227,32 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                                             </Select>
                                         </div>
                                         <div className="space-y-2">
-                                            <Label>2. Select Option to Group By</Label>
+                                            <Label>2. Select Target Variants</Label>
                                             <Select value={bulkAssignOption} onValueChange={val => { setBulkAssignOption(val); setBulkAssignValue(''); }}>
-                                                <SelectTrigger><SelectValue placeholder="Select an option..." /></SelectTrigger>
+                                                <SelectTrigger><SelectValue placeholder="Group by option or select all..." /></SelectTrigger>
                                                 <SelectContent>
+                                                    <SelectItem value="All Variants">All Variants</SelectItem>
                                                     {[...availableOptions.keys()].map(optionName => (
                                                         <SelectItem key={optionName} value={optionName}>{optionName}</SelectItem>
                                                     ))}
                                                 </SelectContent>
                                             </Select>
                                         </div>
-                                        <div className="space-y-2">
-                                            <Label>3. Select Value to Match</Label>
-                                            <Select value={bulkAssignValue} onValueChange={setBulkAssignValue} disabled={!bulkAssignOption}>
-                                                <SelectTrigger><SelectValue placeholder="Select a value..." /></SelectTrigger>
-                                                <SelectContent>
-                                                    {bulkAssignOption && availableOptions.get(bulkAssignOption)?.size &&
-                                                        Array.from(availableOptions.get(bulkAssignOption)!).map(value => (
-                                                            <SelectItem key={value} value={value}>{value}</SelectItem>
-                                                        ))
-                                                    }
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
+                                        {bulkAssignOption && bulkAssignOption !== 'All Variants' && (
+                                            <div className="space-y-2">
+                                                <Label>3. Select Value to Match</Label>
+                                                <Select value={bulkAssignValue} onValueChange={setBulkAssignValue}>
+                                                    <SelectTrigger><SelectValue placeholder="Select a value..." /></SelectTrigger>
+                                                    <SelectContent>
+                                                        {availableOptions.get(bulkAssignOption)?.size &&
+                                                            Array.from(availableOptions.get(bulkAssignOption)!).map(value => (
+                                                                <SelectItem key={value} value={value}>{value}</SelectItem>
+                                                            ))
+                                                        }
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        )}
                                     </div>
                                     <DialogFooter>
                                         <Button variant="outline" onClick={() => setIsBulkAssignDialogOpen(false)}>Cancel</Button>
