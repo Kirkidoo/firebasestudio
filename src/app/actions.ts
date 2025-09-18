@@ -572,18 +572,31 @@ export async function createInShopify(
         // 2a. Link variant to image
         if (createdProduct.images && createdProduct.images.length > 0) {
             console.log('Phase 2: Linking images to variants...');
-            const imageUrlToIdMap = new Map(createdProduct.images.map((img: any) => [img.src, img.id]));
+            // Shopify may alter image URLs (e.g., by adding version query params).
+            // A more robust way to match is by the image filename.
+            const getImageFilename = (url: string) => url.split('/').pop()?.split('?')[0];
+
+            const imageFilenameToIdMap = new Map<string, number>();
+            createdProduct.images.forEach((img: any) => {
+                const filename = getImageFilename(img.src);
+                if (filename) {
+                    imageFilenameToIdMap.set(filename, img.id);
+                }
+            });
             
             for (const sourceVariant of allVariantsForHandle) {
                  const createdVariant = createdProduct.variants.find((v: any) => v.sku === sourceVariant.sku);
                  if (!createdVariant || !sourceVariant.mediaUrl) continue;
 
-                 const imageId = imageUrlToIdMap.get(sourceVariant.mediaUrl);
+                 const sourceFilename = getImageFilename(sourceVariant.mediaUrl);
+                 if (!sourceFilename) continue;
+
+                 const imageId = imageFilenameToIdMap.get(sourceFilename);
                  if (imageId) {
                     console.log(` - Assigning image ID ${imageId} to variant ID ${createdVariant.id}...`);
                     await updateProductVariant(createdVariant.id, { image_id: imageId });
                  } else {
-                    console.warn(` - Could not find a created image matching source URL: ${sourceVariant.mediaUrl} for SKU: ${sourceVariant.sku}`);
+                    console.warn(` - Could not find a created image matching source URL: ${sourceVariant.mediaUrl} (filename: ${sourceFilename}) for SKU: ${sourceVariant.sku}`);
                  }
             }
         }
@@ -876,6 +889,7 @@ export async function deleteUnlinkedImages(productId: string): Promise<{ success
             } else {
                  console.warn(`Failed to delete image ID ${image.id}: ${result.message}`);
             }
+             await sleep(600); // Add delay between each deletion to avoid rate limiting
         }
         
         const message = `Successfully deleted ${deletedCount} of ${unlinkedImages.length} unlinked images.`;
@@ -956,3 +970,4 @@ export async function fixMismatchesAndDeleteUnlinkedImages(
     
 
     
+
