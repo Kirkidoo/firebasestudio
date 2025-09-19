@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useTransition, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -1192,7 +1193,7 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                         <Badge variant="outline" className="w-[80px] justify-center">{items.length} SKU{items.length > 1 ? 's' : ''}</Badge>
                         
                         {productId && !isMissingVariantCase && (
-                            <Dialog open={editingMediaFor === productId} onOpenChange={(open) => setEditingMediaFor(open ? productId : null)}>
+                             <Dialog open={editingMediaFor === productId} onOpenChange={(open) => setEditingMediaFor(open ? productId : null)}>
                                 <DialogTrigger asChild>
                                     <Button size="sm" variant="outline" className="w-[180px]" onClick={(e) => e.stopPropagation()} disabled={isAutoRunning || isAutoCreating}>
                                         {isLoadingImages ? (
@@ -1209,19 +1210,35 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                                     </Button>
                                 </DialogTrigger>
                                 {editingMediaFor === productId && (
-                                     <MediaManager 
-                                        key={productId}
-                                        productId={productId}
-                                        onImageCountChange={(newCount) => handleImageCountChange(productId, newCount)}
-                                    />
+                                    <DialogContent className="max-w-5xl">
+                                        <MediaManager 
+                                            key={productId}
+                                            productId={productId}
+                                            onImageCountChange={(newCount) => handleImageCountChange(productId, newCount)}
+                                        />
+                                    </DialogContent>
                                 )}
                             </Dialog>
                         )}
                         {isMissingProductCase && (
-                            <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => {e.stopPropagation(); setEditingMissingMedia(handle)}} disabled={isAutoRunning || isAutoCreating}>
-                                <ImageIcon className="mr-2 h-4 w-4" />
-                                Manage Media
-                            </Button>
+                            <Dialog open={editingMissingMedia === handle} onOpenChange={(open) => setEditingMissingMedia(open ? handle : null)}>
+                                <DialogTrigger asChild>
+                                    <Button size="sm" variant="outline" className="w-[160px]" onClick={(e) => {e.stopPropagation(); setEditingMissingMedia(handle)}} disabled={isAutoRunning || isAutoCreating}>
+                                        <ImageIcon className="mr-2 h-4 w-4" />
+                                        Manage Media
+                                    </Button>
+                                </DialogTrigger>
+                                {editingMissingMedia === handle && (
+                                    <DialogContent className="max-w-5xl">
+                                        <PreCreationMediaManager
+                                            key={handle} 
+                                            variants={editingMissingMediaVariants}
+                                            onSave={handleSavePreCreationMedia}
+                                            onCancel={() => setEditingMissingMedia(null)}
+                                        />
+                                    </DialogContent>
+                                )}
+                            </Dialog>
                         )}
                     </div>
                 </AccordionHeader>
@@ -1753,16 +1770,21 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
         )}
       </CardContent>
     </Card>
-      <Dialog open={!!editingMissingMedia} onOpenChange={(open) => !open && setEditingMissingMedia(null)}>
-        <PreCreationMediaManager
-            key={editingMissingMedia} 
-            variants={editingMissingMediaVariants}
-            onSave={handleSavePreCreationMedia}
-            onCancel={() => setEditingMissingMedia(null)}
-        />
-    </Dialog>
+    {editingMissingMedia && (
+        <Dialog open={!!editingMissingMedia} onOpenChange={(open) => setEditingMissingMedia(open ? editingMissingMedia : null)}>
+            <DialogContent className="max-w-5xl">
+                <PreCreationMediaManager
+                    key={editingMissingMedia} 
+                    variants={editingMissingMediaVariants}
+                    onSave={handleSavePreCreationMedia}
+                    onCancel={() => setEditingMissingMedia(null)}
+                />
+            </DialogContent>
+        </Dialog>
+    )}
     {editingMissingVariantMedia && (
-        <Dialog open={true} onOpenChange={(open) => !open && setEditingMissingVariantMedia(null)}>
+        <Dialog open={!!editingMissingVariantMedia} onOpenChange={(open) => setEditingMissingVariantMedia(open ? editingMissingVariantMedia : null)}>
+            <DialogContent className="max-w-5xl">
              <MediaManager 
                 key={editingMissingVariantMedia.parentProductId}
                 productId={editingMissingVariantMedia.parentProductId}
@@ -1771,9 +1793,11 @@ export default function AuditReport({ data, summary, duplicates, fileName, onRes
                 missingVariants={editingMissingVariantMedia.items.map(i => i.csvProducts[0]).filter((p): p is Product => !!p)}
                 onSaveMissingVariant={handleSaveMissingVariantMedia}
              />
+            </DialogContent>
         </Dialog>
     )}
     </>
   );
 }
+
 

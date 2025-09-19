@@ -332,7 +332,7 @@ export function MediaManager({
 
 
     return (
-        <DialogContent className="max-w-5xl">
+        <>
             <DialogHeader>
                 <DialogTitle>Manage Product Media</DialogTitle>
                 <DialogDescription>
@@ -637,6 +637,7 @@ export function MediaManager({
                 )}
                 </>
             )}
-        </DialogContent>
+        </>
     );
 }
+

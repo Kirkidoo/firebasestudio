@@ -185,7 +185,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
     const assignedUrls = new Set(localVariants.map(v => v.mediaUrl).filter(Boolean));
 
     return (
-        <DialogContent className="max-w-5xl">
+        <>
             <DialogHeader>
                 <DialogTitle>Manage Media for: {productTitle}</DialogTitle>
                 <DialogDescription>
@@ -386,6 +386,7 @@ export function PreCreationMediaManager({ variants, onSave, onCancel }: PreCreat
                 <Button variant="outline" onClick={onCancel}>Cancel</Button>
                 <Button onClick={handleSave}>Save Assignments</Button>
             </DialogFooter>
-        </DialogContent>
+        </>
     );
 }
+
