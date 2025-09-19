@@ -22,9 +22,18 @@ import { cn } from '@/lib/utils';
 interface MediaManagerProps {
     productId: string;
     onImageCountChange: (newCount: number) => void;
+    isMissingVariantMode?: boolean;
+    missingVariant?: Product;
+    onSaveMissingVariant?: (updatedVariant: Product) => void;
 }
 
-export function MediaManager({ productId, onImageCountChange }: MediaManagerProps) {
+export function MediaManager({ 
+    productId, 
+    onImageCountChange, 
+    isMissingVariantMode = false, 
+    missingVariant,
+    onSaveMissingVariant
+}: MediaManagerProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [variants, setVariants] = useState<Partial<Product>[]>([]);
@@ -33,6 +42,8 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
     const [isSubmitting, startSubmitting] = useTransition();
     const { toast } = useToast();
     const [selectedImageIds, setSelectedImageIds] = useState<Set<number>>(new Set());
+    const [localMissingVariant, setLocalMissingVariant] = useState<Product | undefined>(missingVariant);
+
 
     // State for bulk assign dialog
     const [bulkAssignImageId, setBulkAssignImageId] = useState<string>('');
@@ -59,6 +70,10 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
         fetchMediaData();
     }, [fetchMediaData]);
     
+    useEffect(() => {
+        setLocalMissingVariant(missingVariant);
+    }, [missingVariant]);
+
     const handleImageSelection = (imageId: number, checked: boolean) => {
         const newSet = new Set(selectedImageIds);
         if (checked) {
@@ -117,6 +132,10 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
             }
         });
     }
+
+    const handleAssignImageToMissingVariant = (imageId: number | null) => {
+        setLocalMissingVariant(prev => prev ? { ...prev, imageId } : undefined);
+    };
     
     const handleDeleteImage = (imageId: number) => {
         const imageToDelete = images.find(img => img.id === imageId);
@@ -285,7 +304,10 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
             <DialogHeader>
                 <DialogTitle>Manage Product Media</DialogTitle>
                 <DialogDescription>
-                    Add, remove, and assign images for this product and its variants. Use checkboxes for bulk actions.
+                    {isMissingVariantMode
+                        ? "Assign an existing image from the parent product to the new variant."
+                        : "Add, remove, and assign images for this product and its variants. Use checkboxes for bulk actions."
+                    }
                 </DialogDescription>
             </DialogHeader>
             {isLoading && (
@@ -303,11 +325,14 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                 </div>
             )}
             {!isLoading && !error && (
+                <>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-h-[70vh] overflow-hidden">
                     <div className="flex flex-col gap-4 overflow-y-auto pr-2">
                         <div className="flex justify-between items-center border-b pb-2">
                             <h3 className="font-semibold text-lg">Image Gallery ({images.length})</h3>
                              <div className="flex items-center gap-2">
+                                {!isMissingVariantMode && (
+                                <>
                                 <Dialog open={isBulkAssignDialogOpen} onOpenChange={setIsBulkAssignDialogOpen}>
                                     <DialogTrigger asChild>
                                         <Button variant="outline" size="sm" disabled={isSubmitting || images.length === 0}>
@@ -387,6 +412,8 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                         </AlertDialogFooter>
                                     </AlertDialogContent>
                                 </AlertDialog>
+                                </>
+                                )}
                             </div>
                         </div>
 
@@ -395,7 +422,7 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                 id="select-all"
                                 onCheckedChange={(checked) => handleSelectAllUnlinked(!!checked)}
                                 checked={areAllUnlinkedSelected}
-                                disabled={unlinkedImages.length === 0}
+                                disabled={unlinkedImages.length === 0 || isMissingVariantMode}
                              />
                             <Label htmlFor="select-all" className="text-sm font-normal">Select All Unlinked ({unlinkedImages.length})</Label>
                         </div>
@@ -405,7 +432,7 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                 const isAssigned = image.variant_ids && image.variant_ids.length > 0;
                                 const isSelected = selectedImageIds.has(image.id);
                                 return (
-                                    <div key={image.id} className="relative group border rounded-md overflow-hidden cursor-pointer" onClick={() => handleImageSelection(image.id, !isSelected)}>
+                                    <div key={image.id} className="relative group border rounded-md overflow-hidden cursor-pointer" onClick={() => !isMissingVariantMode && handleImageSelection(image.id, !isSelected)}>
                                         <Image
                                             src={image.src}
                                             alt={`Product image ${image.id}`}
@@ -416,7 +443,8 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                         <div className={cn(
                                             "absolute inset-0 bg-black/60 transition-opacity flex items-start justify-between p-1.5",
                                             (isSelected || isSubmitting) ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-                                             isSubmitting ? "pointer-events-none" : "pointer-events-auto"
+                                             isSubmitting ? "pointer-events-none" : "pointer-events-auto",
+                                             isMissingVariantMode && "hidden"
                                         )}>
                                              <Checkbox
                                                 id={`image-select-${image.id}`}
@@ -449,7 +477,8 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                                     <TooltipTrigger asChild>
                                                         <div className={cn(
                                                             "absolute top-1.5 right-1.5 h-6 w-6 inline-flex items-center justify-center rounded-full bg-secondary/80 text-secondary-foreground pointer-events-auto",
-                                                            !isSelected && "group-hover:hidden"
+                                                            !isSelected && "group-hover:hidden",
+                                                            isMissingVariantMode && "hidden"
                                                         )}>
                                                             <Link className="h-3.5 w-3.5" />
                                                         </div>
@@ -464,6 +493,7 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                 )
                             })}
                         </div>
+                        {!isMissingVariantMode && (
                          <div className="p-4 border rounded-md mt-auto bg-muted/20">
                             <Label htmlFor="new-image-url" className="text-base font-medium">Add New Image</Label>
                             <div className="flex gap-2 mt-2">
@@ -480,10 +510,13 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                 </Button>
                             </div>
                         </div>
+                        )}
                     </div>
                     {/* Right side: Variant Assignments */}
                     <div className="flex flex-col gap-4 overflow-y-auto pr-2">
-                        <h3 className="font-semibold text-lg border-b pb-2">Variant Assignments ({variants.length})</h3>
+                        <h3 className="font-semibold text-lg border-b pb-2">
+                             {isMissingVariantMode ? "Assign to New Variant" : `Variant Assignments (${variants.length})`}
+                        </h3>
                         <Table>
                             <TableHeader>
                                 <TableRow>
@@ -493,7 +526,37 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {variants.map(variant => (
+                                {isMissingVariantMode && localMissingVariant ? (
+                                    <TableRow>
+                                        <TableCell className="font-medium">{localMissingVariant.sku}</TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">
+                                            {[localMissingVariant.option1Value, localMissingVariant.option2Value, localMissingVariant.option3Value].filter(Boolean).join(' / ')}
+                                        </TableCell>
+                                        <TableCell>
+                                            <Select
+                                                value={localMissingVariant.imageId?.toString() ?? 'none'}
+                                                onValueChange={(value) => handleAssignImageToMissingVariant(value === 'none' ? null : parseInt(value))}
+                                                disabled={isSubmitting}
+                                            >
+                                                <SelectTrigger className="w-[180px]">
+                                                    <SelectValue placeholder="Select image..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="none">No Image</SelectItem>
+                                                    {images.map(image => (
+                                                         <SelectItem key={image.id} value={image.id.toString()}>
+                                                            <div className="flex items-center gap-2">
+                                                                <Image src={image.src} alt="" width={20} height={20} className="rounded-sm" />
+                                                                <span>Image #{image.id}</span>
+                                                            </div>
+                                                         </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </TableCell>
+                                    </TableRow>
+                                ) : (
+                                variants.map(variant => (
                                     <TableRow key={variant.variantId}>
                                         <TableCell className="font-medium">{variant.sku}</TableCell>
                                         <TableCell className="text-xs text-muted-foreground">
@@ -522,11 +585,25 @@ export function MediaManager({ productId, onImageCountChange }: MediaManagerProp
                                             </Select>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                )))}
                             </TableBody>
                         </Table>
                     </div>
                 </div>
+                {isMissingVariantMode && (
+                    <DialogFooter>
+                        <DialogClose asChild>
+                            <Button variant="outline">Cancel</Button>
+                        </DialogClose>
+                        <Button
+                            onClick={() => onSaveMissingVariant?.(localMissingVariant!)}
+                            disabled={!localMissingVariant}
+                        >
+                            Save Assignment
+                        </Button>
+                    </DialogFooter>
+                )}
+                </>
             )}
         </DialogContent>
     );

@@ -59,10 +59,11 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
   }
 `;
 
-const GET_PRODUCT_ID_BY_HANDLE_QUERY = `
+const GET_PRODUCT_BY_HANDLE_QUERY = `
   query getProductByHandle($handle: String!) {
     productByHandle(handle: $handle) {
       id
+      handle
     }
   }
 `;
@@ -337,7 +338,7 @@ export async function getFullProduct(productId: number): Promise<any> {
     }
 }
 
-export async function getProductImageCounts(productIds: string[]): Promise<Record<string, number>> {
+export async function getProductImageCounts(productIds: number[]): Promise<Record<string, number>> {
     const shopifyClient = getShopifyRestClient();
     if (productIds.length === 0) {
         return {};
@@ -362,6 +363,22 @@ export async function getProductImageCounts(productIds: string[]): Promise<Recor
     } catch (error: any) {
         console.error("Error fetching product image counts via REST:", error.response?.body || error);
         throw new Error(`Failed to fetch product image counts: ${JSON.stringify(error.response?.body?.errors || error.message)}`);
+    }
+}
+
+export async function getProductByHandle(handle: string): Promise<any> {
+    const shopifyClient = getShopifyGraphQLClient();
+     try {
+        const response: any = await shopifyClient.query({
+            data: {
+                query: GET_PRODUCT_BY_HANDLE_QUERY,
+                variables: { handle },
+            },
+        });
+        return response.body.data?.productByHandle;
+    } catch (error) {
+        console.error(`Error fetching product by handle "${handle}":`, error);
+        return null;
     }
 }
 
@@ -487,7 +504,7 @@ export async function addProductVariant(product: Product): Promise<any> {
     // Find the parent product's ID using its handle
     const productResponse: any = await graphQLClient.query({
         data: {
-            query: GET_PRODUCT_ID_BY_HANDLE_QUERY,
+            query: GET_PRODUCT_BY_HANDLE_QUERY,
             variables: { handle: product.handle },
         },
     });
@@ -513,7 +530,8 @@ export async function addProductVariant(product: Product): Promise<any> {
         inventory_policy: 'deny',
         option1: getOptionValue(product.option1Value, product.sku),
         option2: getOptionValue(product.option2Value, null),
-        option3: getOptionValue(product.option3Value, null)
+        option3: getOptionValue(product.option3Value, null),
+        image_id: product.imageId,
       }
     }
     
@@ -1050,6 +1068,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
     
 
     
+
 
 
 

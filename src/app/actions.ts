@@ -5,7 +5,7 @@ import { Product, AuditResult, DuplicateSku, MismatchDetail, ShopifyProductImage
 import { Client } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
 import { parse } from 'csv-parse';
-import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation as startShopifyBulkOp, checkBulkOperationStatus as checkShopifyBulkOpStatus, getBulkOperationResult, parseBulkOperationResult, getFullProduct, addProductImage, deleteProductImage, getProductImageCounts as getShopifyProductImageCounts } from '@/lib/shopify';
+import { getShopifyProductsBySku, updateProduct, updateProductVariant, updateInventoryLevel, createProduct, addProductVariant, connectInventoryToLocation, linkProductToCollection, getCollectionIdByTitle, getShopifyLocations, disconnectInventoryFromLocation, publishProductToSalesChannels, deleteProduct, deleteProductVariant, startProductExportBulkOperation as startShopifyBulkOp, checkBulkOperationStatus as checkShopifyBulkOpStatus, getBulkOperationResult, parseBulkOperationResult, getFullProduct, addProductImage, deleteProductImage, getProductImageCounts as getShopifyProductImageCounts, getProductByHandle } from '@/lib/shopify';
 import { revalidatePath } from 'next/cache';
 import fs from 'fs/promises';
 import path from 'path';
@@ -537,7 +537,8 @@ export async function createInShopify(
     console.log(`Attempting to create product/variant for Handle: ${product.handle}, Missing Type: ${missingType}`);
     
     // Final pre-creation check to prevent duplicates
-    const skusToCreate = allVariantsForHandle.map(p => p.sku);
+    const skusToCreate = missingType === 'product' ? allVariantsForHandle.map(p => p.sku) : [product.sku];
+
     console.log(`Performing final check for SKUs: ${skusToCreate.join(', ')}`);
     const existingProducts = await getShopifyProductsBySku(skusToCreate);
     if (existingProducts.length > 0) {
@@ -584,19 +585,32 @@ export async function createInShopify(
                 }
             });
             
-            for (const sourceVariant of allVariantsForHandle) {
+            const variantsToLink = missingType === 'product' ? allVariantsForHandle : [product];
+
+            for (const sourceVariant of variantsToLink) {
                  const createdVariant = createdProduct.variants.find((v: any) => v.sku === sourceVariant.sku);
-                 if (!createdVariant || !sourceVariant.mediaUrl) continue;
+                 if (!createdVariant) continue;
 
-                 const sourceFilename = getImageFilename(sourceVariant.mediaUrl);
-                 if (!sourceFilename) continue;
+                 let imageIdToAssign: number | null = null;
+                 
+                 // If the variant from the CSV has an image URL, try to match it by filename.
+                 if (sourceVariant.mediaUrl) {
+                     const sourceFilename = getImageFilename(sourceVariant.mediaUrl);
+                     if (sourceFilename && imageFilenameToIdMap.has(sourceFilename)) {
+                         imageIdToAssign = imageFilenameToIdMap.get(sourceFilename)!;
+                     }
+                 }
+                 // If the user assigned an imageId directly (for missing variants)
+                 else if (sourceVariant.imageId) {
+                     imageIdToAssign = sourceVariant.imageId;
+                 }
 
-                 const imageId = imageFilenameToIdMap.get(sourceFilename);
-                 if (imageId) {
-                    console.log(` - Assigning image ID ${imageId} to variant ID ${createdVariant.id}...`);
-                    await updateProductVariant(createdVariant.id, { image_id: imageId });
-                 } else {
-                    console.warn(` - Could not find a created image matching source URL: ${sourceVariant.mediaUrl} (filename: ${sourceFilename}) for SKU: ${sourceVariant.sku}`);
+
+                 if (imageIdToAssign) {
+                    console.log(` - Assigning image ID ${imageIdToAssign} to variant ID ${createdVariant.id}...`);
+                    await updateProductVariant(createdVariant.id, { image_id: imageIdToAssign });
+                 } else if (sourceVariant.mediaUrl || sourceVariant.imageId) {
+                    console.warn(` - Could not find a matching image for SKU: ${sourceVariant.sku}`);
                  }
             }
         }
@@ -631,8 +645,8 @@ export async function createInShopify(
             }
         }
         
-        // 2c. Link product to collection if category is specified
-        if (product.category && productGid) {
+        // 2c. Link product to collection if category is specified (only for new products)
+        if (missingType === 'product' && product.category && productGid) {
             console.log(`Linking product to collection: '${product.category}'...`);
             const collectionId = await getCollectionIdByTitle(product.category);
             if (collectionId) {
@@ -642,12 +656,12 @@ export async function createInShopify(
             }
         }
 
-        // 2d. Publish to all sales channels
-        if (productGid) {
+        // 2d. Publish to all sales channels (only for new products)
+        if (missingType === 'product' && productGid) {
             console.log(`Publishing product ${productGid} to all sales channels...`);
             await publishProductToSalesChannels(productGid);
         } else {
-            console.warn(`Could not publish product with handle ${product.handle} because its GID was not found.`);
+            console.warn(`Could not publish product with handle ${product.handle} because its GID was not found or it's a new variant.`);
         }
 
 
@@ -787,6 +801,24 @@ export async function getProductWithImages(productId: string): Promise<{ variant
         throw new Error(message);
     }
 }
+
+export async function getProductByHandleServer(handle: string): Promise<Product | null> {
+    try {
+        const product = await getProductByHandle(handle);
+        if (!product) return null;
+        
+        return {
+            id: product.id,
+            handle: product.handle,
+            // Map other fields if necessary for the client
+        } as Product;
+
+    } catch (error) {
+        console.error(`Failed to get product by handle ${handle}:`, error);
+        return null;
+    }
+}
+
 
 export async function getProductImageCounts(productIds: string[]): Promise<Record<string, number>> {
     try {
@@ -970,4 +1002,3 @@ export async function fixMismatchesAndDeleteUnlinkedImages(
     
 
     
-
