@@ -27,6 +27,7 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
           handle
           bodyHtml
           templateSuffix
+          tags
           priceRange {
             minVariantPrice {
               amount
@@ -157,6 +158,34 @@ const GET_CURRENT_BULK_OPERATION_QUERY = `
   }
 `;
 
+const ADD_TAGS_MUTATION = `
+  mutation tagsAdd($id: ID!, $tags: [String!]!) {
+    tagsAdd(id: $id, tags: $tags) {
+      node {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const REMOVE_TAGS_MUTATION = `
+  mutation tagsRemove($id: ID!, $tags: [String!]!) {
+    tagsRemove(id: $id, tags: $tags) {
+      node {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 
 // --- Client Initialization ---
 
@@ -278,7 +307,7 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                             descriptionHtml: productEdge.node.bodyHtml,
                             productType: null,
                             vendor: null,
-                            tags: null,
+                            tags: productEdge.node.tags.join(', '),
                             compareAtPrice: null,
                             costPerItem: null,
                             barcode: null,
@@ -844,6 +873,47 @@ export async function publishProductToSalesChannels(productGid: string): Promise
 }
 
 
+export async function addProductTags(productId: string, tags: string[]): Promise<void> {
+    const shopifyClient = getShopifyGraphQLClient();
+    try {
+        const response: any = await shopifyClient.query({
+            data: {
+                query: ADD_TAGS_MUTATION,
+                variables: { id: productId, tags },
+            },
+        });
+        const userErrors = response.body.data?.tagsAdd?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+            throw new Error(`Failed to add tags: ${userErrors[0].message}`);
+        }
+        console.log(`Successfully added tags to product ${productId}`);
+    } catch (error: any) {
+        console.error(`Error adding tags to product ${productId}:`, error);
+        throw error;
+    }
+}
+
+export async function removeProductTags(productId: string, tags: string[]): Promise<void> {
+    const shopifyClient = getShopifyGraphQLClient();
+    try {
+        const response: any = await shopifyClient.query({
+            data: {
+                query: REMOVE_TAGS_MUTATION,
+                variables: { id: productId, tags },
+            },
+        });
+        const userErrors = response.body.data?.tagsRemove?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+            throw new Error(`Failed to remove tags: ${userErrors[0].message}`);
+        }
+        console.log(`Successfully removed tags from product ${productId}`);
+    } catch (error: any) {
+        console.error(`Error removing tags from product ${productId}:`, error);
+        throw error;
+    }
+}
+
+
 // --- MEDIA FUNCTIONS ---
 export async function addProductImage(productId: number, imageUrl: string): Promise<ShopifyProductImage> {
     const shopifyClient = getShopifyRestClient();
@@ -902,6 +972,7 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                         handle
                         vendor
                         productType
+                        tags
                         bodyHtml
                         templateSuffix
                         variants {
@@ -1049,7 +1120,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     descriptionHtml: parentProduct.bodyHtml,
                     productType: parentProduct.productType,
                     vendor: parentProduct.vendor,
-                    tags: null,
+                    tags: parentProduct.tags.join(', '),
                     compareAtPrice: null,
                     costPerItem: shopifyProduct.inventoryItem?.unitCost?.amount ? parseFloat(shopifyProduct.inventoryItem.unitCost.amount) : null,
                     barcode: null,
@@ -1087,6 +1158,7 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
     
 
     
+
 
 
 
