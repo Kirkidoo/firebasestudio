@@ -478,7 +478,10 @@ export async function createProduct(productVariants: Product[], addClearanceTag:
     const uniqueImageUrls = [...new Set(processedVariants.map((p: Product) => p.mediaUrl).filter(Boolean) as string[])];
     const restImages = uniqueImageUrls.map(url => ({ src: url }));
 
-    const tags = addClearanceTag ? 'Clearance' : '';
+    let tags = firstVariant.tags || '';
+    if (addClearanceTag && !tags.toLowerCase().includes('clearance')) {
+        tags = tags ? `Clearance, ${tags}` : 'Clearance';
+    }
 
 
     const productPayload: any = {
@@ -1165,3 +1168,6 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
 
 
 
+
+
+      
