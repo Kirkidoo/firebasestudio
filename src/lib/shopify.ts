@@ -270,73 +270,81 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
     let processedSkusCount = 0;
     for (const batch of skuBatches) {
         const query = batch.map(sku => `sku:"${sku}"`).join(' OR ');
+        let retries = 0;
+        let success = false;
         
-        try {
-            await sleep(500); // Rate limiting
+        while(retries < 3 && !success) {
+            try {
+                await sleep(500); // Rate limiting
 
-            const response: any = await shopifyClient.query({
-                data: {
-                    query: GET_PRODUCTS_BY_SKU_QUERY,
-                    variables: { query },
+                const response: any = await shopifyClient.query({
+                    data: {
+                        query: GET_PRODUCTS_BY_SKU_QUERY,
+                        variables: { query },
+                    }
+                });
+                
+                if (response.body.errors) {
+                  console.error('GraphQL Errors:', response.body.errors);
+                  if (JSON.stringify(response.body.errors).includes('Throttled')) {
+                     console.log("Throttled by Shopify, waiting 5 seconds before retrying...");
+                     retries++;
+                     await sleep(5000);
+                     continue; // Retry the same batch
+                  }
                 }
-            });
-            
-            if (response.body.errors) {
-              console.error('GraphQL Errors:', response.body.errors);
-              if (JSON.stringify(response.body.errors).includes('Throttled')) {
-                 console.log("Throttled by Shopify, waiting 5 seconds before retrying...");
-                 await sleep(5000);
-              }
-            }
 
-            const productEdges = response.body.data?.products?.edges || [];
+                const productEdges = response.body.data?.products?.edges || [];
 
-            for (const productEdge of productEdges) {
-                for (const variantEdge of productEdge.node.variants.edges) {
-                    const variant = variantEdge.node;
-                     if(variant && variant.sku) {
-                        allProducts.push({
-                            id: productEdge.node.id,
-                            variantId: variant.id,
-                            inventoryItemId: variant.inventoryItem?.id,
-                            handle: productEdge.node.handle,
-                            sku: variant.sku,
-                            name: productEdge.node.title,
-                            price: parseFloat(variant.price),
-                            inventory: variant.inventoryQuantity,
-                            descriptionHtml: productEdge.node.bodyHtml,
-                            productType: null,
-                            vendor: null,
-                            tags: productEdge.node.tags.join(', '),
-                            compareAtPrice: null,
-                            costPerItem: null,
-                            barcode: null,
-                            weight: convertWeightToGrams(variant.weight, variant.weightUnit),
-                            mediaUrl: productEdge.node.featuredImage?.url || null,
-                            imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
-                            category: null,
-                            option1Name: null,
-                            option1Value: null,
-                            option2Name: null,
-                            option2Value: null,
-                            option3Name: null,
-                            option3Value: null,
-                            templateSuffix: productEdge.node.templateSuffix,
-                        });
+                for (const productEdge of productEdges) {
+                    for (const variantEdge of productEdge.node.variants.edges) {
+                        const variant = variantEdge.node;
+                         if(variant && variant.sku) {
+                            allProducts.push({
+                                id: productEdge.node.id,
+                                variantId: variant.id,
+                                inventoryItemId: variant.inventoryItem?.id,
+                                handle: productEdge.node.handle,
+                                sku: variant.sku,
+                                name: productEdge.node.title,
+                                price: parseFloat(variant.price),
+                                inventory: variant.inventoryQuantity,
+                                descriptionHtml: productEdge.node.bodyHtml,
+                                productType: null,
+                                vendor: null,
+                                tags: productEdge.node.tags.join(', '),
+                                compareAtPrice: null,
+                                costPerItem: null,
+                                barcode: null,
+                                weight: convertWeightToGrams(variant.weight, variant.weightUnit),
+                                mediaUrl: productEdge.node.featuredImage?.url || null,
+                                imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
+                                category: null,
+                                option1Name: null,
+                                option1Value: null,
+                                option2Name: null,
+                                option2Value: null,
+                                option3Name: null,
+                                option3Value: null,
+                                templateSuffix: productEdge.node.templateSuffix,
+                            });
+                        }
                     }
                 }
-            }
-            processedSkusCount += batch.length;
-
-        } catch (error) {
-            console.error("Error during Shopify product fetch loop:", error);
-             if (error instanceof Error && error.message.includes('Throttled')) {
-                console.log("Caught throttled error, waiting 5 seconds before retrying...");
-                await sleep(5000);
-            } else {
-               console.error("An unexpected error occurred while fetching a batch. Skipping to next.", error);
+                success = true; // Batch processed successfully
+            } catch (error) {
+                console.error("Error during Shopify product fetch loop:", error);
+                 if (error instanceof Error && error.message.includes('Throttled')) {
+                    console.log("Caught throttled error, waiting 5 seconds before retrying...");
+                    retries++;
+                    await sleep(5000);
+                } else {
+                   console.error("An unexpected error occurred while fetching a batch. Skipping to next.", error);
+                   break; // Break the retry loop for this batch and move to the next
+                }
             }
         }
+        processedSkusCount += batch.length;
     }
     
     const exactMatchProducts = allProducts.filter(p => requestedSkuSet.has(p.sku));
@@ -1171,3 +1179,5 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
 
 
       
+
+    
