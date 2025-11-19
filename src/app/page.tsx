@@ -1,3 +1,4 @@
+export const maxDuration = 300; // Allow up to 5 minutes for long audits
 import { ShoppingBasket } from 'lucide-react';
 import AuditStepper from '@/components/audit-stepper';
 import Footer from '@/components/footer';

@@ -82,10 +82,14 @@ const GET_PRODUCTS_BY_SKU_QUERY = `
                 sku
                 price
                 inventoryQuantity
-                weight
-                weightUnit
                 inventoryItem {
                     id
+                    measurement {
+                        weight {
+                            value
+                            unit
+                        }
+                    }
                 }
                 image {
                   id
@@ -382,7 +386,10 @@ export async function getShopifyProductsBySku(skus: string[]): Promise<Product[]
                                 compareAtPrice: null,
                                 costPerItem: null,
                                 barcode: null,
-                                weight: convertWeightToGrams(variant.weight, variant.weightUnit),
+                                weight: convertWeightToGrams(
+                                    variant.inventoryItem?.measurement?.weight?.value, 
+                                    variant.inventoryItem?.measurement?.weight?.unit
+                                ),
                                 mediaUrl: productEdge.node.featuredImage?.url || null,
                                 imageId: variant.image?.id ? parseInt(variant.image.id.split('/').pop(), 10) : null,
                                 category: null,
@@ -1093,6 +1100,12 @@ export async function startProductExportBulkOperation(): Promise<{ id: string, s
                                             amount
                                         }
                                         tracked
+                                        measurement {
+                                            weight {
+                                                value
+                                                unit
+                                            }
+                                        }
                                     }
                                     image {
                                       id
@@ -1228,8 +1241,12 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
                     tags: parentProduct.tags.join(', '),
                     compareAtPrice: null,
                     costPerItem: shopifyProduct.inventoryItem?.unitCost?.amount ? parseFloat(shopifyProduct.inventoryItem.unitCost.amount) : null,
-                    barcode: null,
-                    weight: null, // Weight is not available in bulk operations for this API version.
+                    weight: shopifyProduct.inventoryItem?.measurement?.weight?.value 
+                        ? convertWeightToGrams(
+                            parseFloat(shopifyProduct.inventoryItem.measurement.weight.value), 
+                            shopifyProduct.inventoryItem.measurement.weight.unit
+                          ) 
+                        : null,
                     mediaUrl: null, // Note: Bulk export doesn't easily link variant images
                     imageId: shopifyProduct.image?.id ? parseInt(shopifyProduct.image.id.split('/').pop(), 10) : null,
                     category: null,
@@ -1279,3 +1296,4 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
     
 
     
+
