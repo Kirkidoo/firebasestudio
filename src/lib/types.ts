@@ -1,4 +1,3 @@
-
 export interface Product {
   id: string; // Shopify Product GID
   variantId: string; // Shopify Variant GID
@@ -26,12 +25,29 @@ export interface Product {
   option3Name: string | null;
   option3Value: string | null;
   templateSuffix: string | null;
+  locationIds?: string[]; // List of location GIDs where this variant is stocked
 }
 
-export type AuditStatus = 'mismatched' | 'not_in_csv' | 'missing_in_shopify' | 'duplicate_in_shopify' | 'duplicate_handle' | 'matched';
+export type AuditStatus =
+  | 'mismatched'
+  | 'not_in_csv'
+  | 'missing_in_shopify'
+  | 'duplicate_in_shopify'
+  | 'duplicate_handle'
+  | 'matched';
 
 export interface MismatchDetail {
-  field: 'name' | 'price' | 'inventory' | 'h1_tag' | 'missing_in_shopify' | 'duplicate_in_shopify' | 'heavy_product_flag' | 'duplicate_handle' | 'missing_clearance_tag';
+  field:
+  | 'price'
+  | 'inventory'
+  | 'h1_tag'
+  | 'missing_in_shopify'
+  | 'duplicate_in_shopify'
+  | 'heavy_product_flag'
+  | 'duplicate_handle'
+  | 'missing_clearance_tag'
+  | 'incorrect_template_suffix'
+  | 'clearance_price_mismatch';
   csvValue: string | number | null;
   shopifyValue: string | number | null;
   missingType?: 'product' | 'variant';
@@ -46,8 +62,8 @@ export interface AuditResult {
 }
 
 export interface DuplicateSku {
-    sku: string;
-    count: number;
+  sku: string;
+  count: number;
 }
 
 export interface Summary {
