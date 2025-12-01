@@ -122,7 +122,7 @@ export async function parseCsvFromStream(stream: Readable): Promise<{ products: 
         barcode: record['Variant Barcode'] || null,
         weight: weight,
         mediaUrl: record['Variant Image'] || null,
-        category: record.Category || null,
+        category: record.Category || record.category || record['Product Category'] || null,
         option1Name: option1Name,
         option1Value: option1Value,
         option2Name: record['Option2 Name'] || null,

@@ -230,11 +230,11 @@ export async function fixMultipleMismatches(
   const itemsToProcess =
     targetFields && targetFields.length > 0
       ? items
-          .map((item) => ({
-            ...item,
-            mismatches: item.mismatches.filter((m) => targetFields.includes(m.field)),
-          }))
-          .filter((item) => item.mismatches.length > 0)
+        .map((item) => ({
+          ...item,
+          mismatches: item.mismatches.filter((m) => targetFields.includes(m.field)),
+        }))
+        .filter((item) => item.mismatches.length > 0)
       : items;
 
   // Group items by product ID to process fixes for the same product together
@@ -317,6 +317,95 @@ export async function fixMultipleMismatches(
   const message = `Attempted to fix ${totalFixesAttempted} issues. Successfully fixed ${fixCount}.`;
   console.log(message);
   return { success: true, message, results: successfulFixes };
+}
+
+export async function bulkUpdateTags(
+  items: AuditResult[],
+  customTag?: string
+): Promise<{ success: boolean; message: string; updatedCount: number; error?: string }> {
+  let successCount = 0;
+  const itemResults: any[] = [];
+
+  const CONCURRENCY_LIMIT = 5;
+  const queue = [...items];
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+
+      await sleep(500); // Rate limit protection
+
+      const csvProduct = item.csvProducts[0];
+      const shopifyProduct = item.shopifyProducts[0];
+
+      if (!shopifyProduct) {
+        itemResults.push({ sku: item.sku, success: false, message: 'Product not found in Shopify.' });
+        continue;
+      }
+
+      if (!csvProduct) {
+        itemResults.push({ sku: item.sku, success: false, message: 'Product not found in CSV.' });
+        continue;
+      }
+
+      // 1. Get first 3 tags from CSV + Category + Custom Tag (Deduplicated)
+      const tagSet = new Set<string>();
+
+      if (csvProduct.tags) {
+        csvProduct.tags
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .slice(0, 3)
+          .forEach(t => tagSet.add(t));
+      }
+
+      if (csvProduct.category) {
+        tagSet.add(csvProduct.category.trim());
+      }
+
+      if (customTag) {
+        tagSet.add(customTag.trim());
+      }
+
+      const tags = Array.from(tagSet).join(', ');
+
+      console.log(`Updating tags for ${item.sku} to: "${tags}"`);
+
+      try {
+        await updateProduct(shopifyProduct.id, { tags });
+        successCount++;
+        itemResults.push({ sku: item.sku, success: true, message: 'Tags updated successfully.' });
+      } catch (error) {
+        console.error(`Failed to update tags for ${item.sku}:`, error);
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        itemResults.push({ sku: item.sku, success: false, message });
+      }
+    }
+  };
+
+  const workers = Array(Math.min(items.length, CONCURRENCY_LIMIT))
+    .fill(null)
+    .map(worker);
+  await Promise.all(workers);
+
+  if (successCount > 0) {
+    revalidatePath('/');
+  }
+
+  const failedItems = itemResults.filter((r) => !r.success);
+  const error =
+    failedItems.length > 0
+      ? failedItems.map((r) => `${r.sku}: ${r.message}`).join('; ')
+      : undefined;
+
+  return {
+    success: successCount > 0,
+    message: `Successfully updated tags for ${successCount} products.`,
+    updatedCount: successCount,
+    error,
+  };
 }
 
 export async function createInShopify(
@@ -455,6 +544,8 @@ export async function createInShopify(
     }
 
     // 2c. Link product to collection if category is specified (only for new products)
+    // REMOVED: Category is now added as a tag, not linked to a collection.
+    /*
     if (missingType === 'product' && product.category && productGid) {
       console.log(`Linking product to collection: '${product.category}'...`);
       const collectionId = await getCollectionIdByTitle(product.category);
@@ -466,6 +557,7 @@ export async function createInShopify(
         );
       }
     }
+    */
 
     // 2d. Publish to all sales channels (only for new products)
     if (missingType === 'product' && productGid) {
@@ -861,3 +953,5 @@ export async function fetchActivityLogs() {
 export async function clearActivityLogs() {
   return await clearLogs();
 }
+
+

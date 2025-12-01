@@ -90,6 +90,7 @@ import {
   getProductByHandleServer,
   createMultipleVariantsForProduct,
   addImageFromUrl,
+  bulkUpdateTags,
 } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -123,6 +124,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Separator } from './ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 type FilterType =
@@ -130,7 +132,8 @@ type FilterType =
   | 'mismatched'
   | 'missing_in_shopify'
   | 'not_in_csv'
-  | 'duplicate_in_shopify';
+  | 'duplicate_in_shopify'
+  | 'tag_updates';
 
 const statusConfig: {
   [key in Exclude<AuditStatus, 'matched'>]: {
@@ -173,6 +176,44 @@ const statusConfig: {
 
 const getHandle = (item: AuditResult) =>
   item.shopifyProducts[0]?.handle || item.csvProducts[0]?.handle || `no-handle-${item.sku}`;
+
+const hasAllExpectedTags = (
+  shopifyTags: string | undefined | null,
+  csvTags: string | undefined | null,
+  category: string | undefined | null,
+  customTag: string
+): boolean => {
+  if (!shopifyTags) return false;
+
+  const currentTags = new Set(
+    shopifyTags.split(',').map((t) => t.trim().toLowerCase())
+  );
+
+  // 1. Check CSV Tags (first 3)
+  if (csvTags) {
+    const expectedCsvTags = csvTags
+      .split(',')
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    for (const tag of expectedCsvTags) {
+      if (!currentTags.has(tag)) return false;
+    }
+  }
+
+  // 2. Check Category
+  if (category) {
+    if (!currentTags.has(category.trim().toLowerCase())) return false;
+  }
+
+  // 3. Check Custom Tag
+  if (customTag) {
+    if (!currentTags.has(customTag.trim().toLowerCase())) return false;
+  }
+
+  return true;
+};
 
 const MismatchDetails = ({
   mismatches,
@@ -439,6 +480,7 @@ const MISMATCH_FILTER_TYPES: MismatchDetail['field'][] = [
   'missing_clearance_tag',
   'incorrect_template_suffix',
   'clearance_price_mismatch',
+  'missing_category_tag',
 ];
 
 const FixMismatchesDialog = ({
@@ -509,6 +551,59 @@ const FixMismatchesDialog = ({
   );
 };
 
+const UpdateTagsDialog = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  count,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (customTag: string) => void;
+  count: number;
+}) => {
+  const [customTag, setCustomTag] = useState('');
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Update Tags for {count} Products</DialogTitle>
+          <DialogDescription>
+            This will overwrite existing tags on Shopify with:
+            <br />
+            1. First 3 tags from CSV
+            <br />
+            2. Category from CSV
+            <br />
+            3. Custom tag (optional)
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="custom-tag" className="text-right">
+              Custom Tag
+            </Label>
+            <Input
+              id="custom-tag"
+              value={customTag}
+              onChange={(e) => setCustomTag(e.target.value)}
+              className="col-span-3"
+              placeholder="e.g. Black Friday Sale"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => onConfirm(customTag)}>Update Tags</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export default function AuditReport({
   data,
   summary,
@@ -541,6 +636,7 @@ export default function AuditReport({
   const [selectedHandles, setSelectedHandles] = useState<Set<string>>(new Set());
   const [hasSelectionWithUnlinkedImages, setHasSelectionWithUnlinkedImages] = useState(false);
   const [hasSelectionWithMismatches, setHasSelectionWithMismatches] = useState(false);
+  const [showUpdateTagsDialog, setShowUpdateTagsDialog] = useState(false);
   const [fixedMismatches, setFixedMismatches] = useState<Set<string>>(new Set());
   const [createdProductHandles, setCreatedProductHandles] = useState<Set<string>>(new Set());
   const [imageCounts, setImageCounts] = useState<Record<string, number>>({});
@@ -555,7 +651,14 @@ export default function AuditReport({
   const [showFixDialog, setShowFixDialog] = useState(false);
   const [fixDialogHandles, setFixDialogHandles] = useState<Set<string> | null>(null);
 
+  const [isAutoUpdatingTags, setIsAutoUpdatingTags] = useState(false);
+  const [autoUpdateCustomTag, setAutoUpdateCustomTag] = useState('');
+  const [showAutoTagDialog, setShowAutoTagDialog] = useState(false);
+  const [updatedProductHandles, setUpdatedProductHandles] = useState<Set<string>>(new Set());
+  const [filterCustomTag, setFilterCustomTag] = useState('');
+
   const selectAllCheckboxRef = useRef<HTMLButtonElement | null>(null);
+  const processingRef = useRef(false);
 
   useEffect(() => {
     setReportData(data);
@@ -637,7 +740,27 @@ export default function AuditReport({
 
     // 1. Filter by main tab
     if (filter !== 'all') {
-      results = results.filter((item) => item.status === filter);
+      if (filter === 'tag_updates') {
+        results = results.filter((item) => {
+          if (item.shopifyProducts.length === 0 || item.csvProducts.length === 0) return false;
+          if (updatedProductHandles.has(getHandle(item))) return false;
+
+          // Smart Filtering: If filterCustomTag is set, hide items that already have all expected tags
+          if (filterCustomTag) {
+            const shopifyTags = item.shopifyProducts[0].tags;
+            const csvTags = item.csvProducts[0].tags;
+            const category = item.csvProducts[0].category;
+
+            if (hasAllExpectedTags(shopifyTags, csvTags, category, filterCustomTag)) {
+              return false;
+            }
+          }
+
+          return true;
+        });
+      } else {
+        results = results.filter((item) => item.status === filter);
+      }
     }
 
     // 2. Filter by search term
@@ -684,6 +807,7 @@ export default function AuditReport({
     createdProductHandles,
     filterSingleSku,
     groupedByHandle,
+    updatedProductHandles,
   ]);
 
   const filteredGroupedByHandle = useMemo(() => {
@@ -808,13 +932,66 @@ export default function AuditReport({
               variant: 'destructive',
             });
           }
+          setShowRefresh(false);
           setSelectedHandles(new Set());
           resolve();
         });
       });
     },
-    [selectedHandles, reportData, fixedMismatches, toast, setFixedMismatches, setSelectedHandles]
+    [reportData, selectedHandles, fixedMismatches, toast, setFixedMismatches, setSelectedHandles]
   );
+
+  const handleUpdateTags = (customTag: string) => {
+    const handlesToProcess = selectedHandles;
+    if (handlesToProcess.size === 0) return;
+
+    const itemsToUpdate = reportData.filter(
+      (item) => item.shopifyProducts.length > 0 && handlesToProcess.has(getHandle(item))
+    );
+
+    setShowUpdateTagsDialog(false);
+    setShowRefresh(true);
+
+    startTransition(async () => {
+      const result = await bulkUpdateTags(itemsToUpdate, customTag);
+      if (result.success) {
+        toast({ title: 'Tags Updated', description: result.message });
+        setUpdatedProductHandles((prev) => {
+          const next = new Set(prev);
+          handlesToProcess.forEach((h) => next.add(h));
+          return next;
+        });
+        setSelectedHandles(new Set());
+      } else {
+        toast({ title: 'Update Failed', description: result.message, variant: 'destructive' });
+      }
+      setShowRefresh(false);
+    });
+  };
+
+
+
+  const toggleSelection = (handle: string) => {
+    const newSelected = new Set(selectedHandles);
+    if (newSelected.has(handle)) {
+      newSelected.delete(handle);
+    } else {
+      newSelected.add(handle);
+    }
+    setSelectedHandles(newSelected);
+  };
+
+  const toggleSelectAllPage = () => {
+    const newSelected = new Set(selectedHandles);
+    const allSelected = paginatedHandleKeys.every((handle) => newSelected.has(handle));
+
+    if (allSelected) {
+      paginatedHandleKeys.forEach((handle) => newSelected.delete(handle));
+    } else {
+      paginatedHandleKeys.forEach((handle) => newSelected.add(handle));
+    }
+    setSelectedHandles(newSelected);
+  };
 
   const handleFixSingleMismatch = (item: AuditResult, fixType: MismatchDetail['field']) => {
     const itemToFix: AuditResult = {
@@ -1186,6 +1363,7 @@ export default function AuditReport({
       missing_clearance_tag: <FileWarning className="h-4 w-4" />,
       incorrect_template_suffix: <FileWarning className="h-4 w-4" />,
       clearance_price_mismatch: <DollarSign className="h-4 w-4" />,
+      missing_category_tag: <FileWarning className="h-4 w-4" />,
     };
 
     return (
@@ -1553,6 +1731,98 @@ export default function AuditReport({
     setIsAutoCreating(false);
     toast({
       title: 'Auto-Create Stopped',
+
+      description: 'The automation process has been stopped.',
+    });
+  };
+
+  const runAutoUpdateTags = useCallback(async () => {
+    if (processingRef.current) return;
+
+    const handlesOnPage = new Set(paginatedHandleKeys);
+    if (handlesOnPage.size === 0) {
+      toast({
+        title: 'Auto-Update Complete',
+        description: 'No more products found on this page.',
+      });
+      setIsAutoUpdatingTags(false);
+      return;
+    }
+
+    processingRef.current = true;
+
+    toast({
+      title: 'Auto-Updating Page...',
+      description: `Updating tags for ${handlesOnPage.size} products.`,
+    });
+
+    const itemsToUpdate = reportData.filter(
+      (item) => handlesOnPage.has(getHandle(item)) && item.shopifyProducts.length > 0
+    );
+
+    try {
+      const result = await bulkUpdateTags(itemsToUpdate, autoUpdateCustomTag);
+      if (result.success) {
+        toast({
+          title: 'Page Updated',
+          description: `Successfully updated tags for ${result.updatedCount} products.Processing next batch...`,
+        });
+
+        setUpdatedProductHandles((prev) => {
+          const next = new Set(prev);
+          handlesOnPage.forEach((h) => next.add(h));
+          return next;
+        });
+
+        // We don't increment page because items are removed from the list, 
+        // so the next batch shifts into the current page.
+      } else {
+        toast({
+          title: 'Update Failed',
+          description: result.error || 'Failed to update tags.',
+          variant: 'destructive',
+        });
+        setIsAutoUpdatingTags(false);
+      }
+    } catch (error) {
+      toast({
+        title: 'Auto-Update Error',
+        description: 'The process was stopped due to an error.',
+        variant: 'destructive',
+      });
+      setIsAutoUpdatingTags(false);
+    } finally {
+      processingRef.current = false;
+    }
+  }, [paginatedHandleKeys, reportData, autoUpdateCustomTag, currentPage, totalPages, toast]);
+
+  useEffect(() => {
+    if (!isAutoUpdatingTags || isFixing) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      runAutoUpdateTags();
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [isAutoUpdatingTags, isFixing, currentPage, runAutoUpdateTags]);
+
+  const startAutoTagUpdate = () => {
+    setShowAutoTagDialog(true);
+  };
+
+  const confirmAutoTagUpdate = (customTag: string) => {
+    setAutoUpdateCustomTag(customTag);
+    setIsAutoUpdatingTags(true);
+    setShowAutoTagDialog(false);
+    // Ensure we start from the current page (or reset to 1 if desired, but user said "page per page" implying from current)
+  };
+
+  const stopAutoTagUpdate = () => {
+    setIsAutoUpdatingTags(false);
+    toast({
+      title: 'Auto-Update Stopped',
       description: 'The automation process has been stopped.',
     });
   };
@@ -1598,7 +1868,7 @@ export default function AuditReport({
     if (newImageUrls.length > 0) {
       toast({
         title: 'Adding New Images...',
-        description: `Found ${newImageUrls.length} new images in the CSV. Adding them to the product gallery.`,
+        description: `Found ${newImageUrls.length} new images in the CSV.Adding them to the product gallery.`,
       });
 
       const uploads = await Promise.all(
@@ -1609,7 +1879,7 @@ export default function AuditReport({
       if (failedUploads.length > 0) {
         toast({
           title: 'Some Images Failed to Add',
-          description: `${failedUploads.length} new images could not be added to the product. They will not be available in the gallery.`,
+          description: `${failedUploads.length} new images could not be added to the product.They will not be available in the gallery.`,
           variant: 'destructive',
         });
       }
@@ -1678,7 +1948,7 @@ export default function AuditReport({
                     <Checkbox
                       checked={selectedHandles.has(handle)}
                       onCheckedChange={(checked) => handleSelectHandle(handle, !!checked)}
-                      aria-label={`Select product ${handle}`}
+                      aria-label={`Select product ${handle} `}
                       disabled={isFixing || isAutoRunning || isAutoCreating || isMissingVariantCase}
                     />
                   </div>
@@ -1689,12 +1959,12 @@ export default function AuditReport({
               >
                 <div className="flex flex-grow items-center gap-4">
                   <config.icon
-                    className={`h-5 w-5 shrink-0 ${overallStatus === 'mismatched'
+                    className={`h - 5 w - 5 shrink - 0 ${overallStatus === 'mismatched'
                       ? 'text-yellow-500'
                       : overallStatus === 'missing_in_shopify'
                         ? 'text-red-500'
                         : 'text-blue-500'
-                      }`}
+                      } `}
                   />
                   <div className="flex-grow text-left">
                     <p className="font-semibold">{productTitle}</p>
@@ -1922,7 +2192,19 @@ export default function AuditReport({
                 </TableHeader>
                 <TableBody>
                   {items.map((item, index) => {
-                    const itemConfig = statusConfig[item.status as Exclude<AuditStatus, 'matched'>];
+                    // We use 'let' instead of 'const' to allow fallback assignment
+                    let itemConfig = statusConfig[item.status as Exclude<AuditStatus, 'matched'>];
+
+                    // If status is 'matched' (or unknown), itemConfig will be undefined.
+                    // We provide a fallback to prevent the crash.
+                    if (!itemConfig) {
+                      itemConfig = {
+                        icon: CheckCircle2,
+                        text: 'Matched',
+                        badgeClass:
+                          'bg-green-100 text-green-800 border-green-200 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700',
+                      };
+                    }
                     const productForDetails = item.csvProducts[0] || item.shopifyProducts[0];
 
                     if (item.status === 'mismatched' && item.mismatches.length === 0) return null;
@@ -1949,7 +2231,7 @@ export default function AuditReport({
                         <TableCell>
                           <Badge
                             variant="outline"
-                            className={`whitespace-nowrap ${itemConfig.badgeClass}`}
+                            className={`whitespace - nowrap ${itemConfig.badgeClass} `}
                           >
                             <itemConfig.icon className="mr-1.5 h-3.5 w-3.5" />
                             {itemConfig.text}
@@ -2234,6 +2516,7 @@ export default function AuditReport({
               </div>
             )}
           </div>
+
           {duplicates.length > 0 && filter !== 'duplicate_in_shopify' && (
             <Alert variant="destructive" className="mt-4">
               <Siren className="h-4 w-4" />
@@ -2277,357 +2560,513 @@ export default function AuditReport({
           </div>
         </CardHeader>
         <CardContent>
-          <div className="mb-4 flex flex-col items-center justify-between gap-4 sm:flex-row">
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  'all',
-                  'mismatched',
-                  'missing_in_shopify',
-                  'not_in_csv',
-                  'duplicate_in_shopify',
-                ] as const
-              ).map((f) => {
-                const count =
-                  f === 'all' ? handleKeys.length : currentSummary[f as Exclude<FilterType, 'all'>];
-                const config = statusConfig[f as keyof typeof statusConfig];
-                if (count === 0 && f !== 'all') return null;
-
-                return (
-                  <Button
-                    key={f}
-                    variant={filter === f ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => handleFilterChange(f)}
-                    disabled={isFixing || isAutoRunning || isAutoCreating}
-                  >
-                    {f === 'all' ? 'All Items' : config.text} ({count})
-                  </Button>
-                );
-              })}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                onClick={onReset}
-                disabled={isFixing || isAutoRunning || isAutoCreating}
-              >
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                New Audit
-              </Button>
-              {showRefresh && (
+          <Tabs value={filter} onValueChange={(v) => setFilter(v as FilterType)} className="w-full">
+            <div className="mb-4 flex flex-col items-center justify-between gap-4 sm:flex-row">
+              <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
+                <TabsTrigger value="all">All Items ({handleKeys.length})</TabsTrigger>
+                <TabsTrigger value="mismatched" className="relative">
+                  Mismatched
+                  {reportSummary.mismatched > 0 && (
+                    <Badge variant="destructive" className="ml-2 h-5 px-1.5 text-xs">
+                      {reportSummary.mismatched}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="missing_in_shopify" className="relative">
+                  Missing
+                  {reportSummary.missing_in_shopify > 0 && (
+                    <Badge variant="destructive" className="ml-2 h-5 px-1.5 text-xs">
+                      {reportSummary.missing_in_shopify}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="not_in_csv" className="relative">
+                  Not in CSV
+                  {reportSummary.not_in_csv > 0 && (
+                    <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                      {reportSummary.not_in_csv}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="duplicate_in_shopify" className="relative">
+                  Duplicates
+                  {reportSummary.duplicate_in_shopify > 0 && (
+                    <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                      {reportSummary.duplicate_in_shopify}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="tag_updates" className="relative">
+                  Tag Manager
+                </TabsTrigger>
+              </TabsList>
+              <div className="flex gap-2">
                 <Button
-                  variant="secondary"
-                  onClick={onRefresh}
+                  variant="ghost"
+                  onClick={onReset}
                   disabled={isFixing || isAutoRunning || isAutoCreating}
                 >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Refresh Data
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  New Audit
                 </Button>
-              )}
-              <Button
-                onClick={handleDownload}
-                disabled={isFixing || isAutoRunning || isAutoCreating}
-              >
-                <Download className="mr-2 h-4 w-4" />
-                Download Report
-              </Button>
+                {showRefresh && (
+                  <Button
+                    variant="secondary"
+                    onClick={onRefresh}
+                    disabled={isFixing || isAutoRunning || isAutoCreating}
+                  >
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh Data
+                  </Button>
+                )}
+                <Button
+                  onClick={handleDownload}
+                  disabled={isFixing || isAutoRunning || isAutoCreating}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download Report
+                </Button>
+              </div>
             </div>
-          </div>
 
-          <div className="mb-4 flex flex-col gap-4 rounded-lg border p-4 md:flex-row">
-            <div className="relative flex-grow">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Filter by Handle, SKU, or Title..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setCurrentPage(1);
-                  setSearchTerm(e.target.value);
-                }}
-                className="pl-10"
-                disabled={isFixing || isAutoRunning || isAutoCreating}
-              />
-            </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="single-sku-filter"
-                checked={filterSingleSku}
-                onCheckedChange={(checked) => {
-                  setCurrentPage(1);
-                  setFilterSingleSku(!!checked);
-                }}
-                disabled={isFixing || isAutoRunning || isAutoCreating}
-              />
-              <Label htmlFor="single-sku-filter" className="whitespace-nowrap font-normal">
-                Show only single SKU products
-              </Label>
-            </div>
-            <Separator orientation="vertical" className="hidden h-auto md:block" />
-            {filter === 'mismatched' && (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full md:w-auto"
-                    disabled={isFixing || isAutoRunning || isAutoCreating}
-                  >
-                    <List className="mr-2 h-4 w-4" />
-                    Filter Mismatches (
-                    {mismatchFilters.size > 0 ? `${mismatchFilters.size} selected` : 'All'})
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-60 p-0">
-                  <div className="p-4">
-                    <h4 className="mb-4 font-medium leading-none">Mismatch Types</h4>
-                    <div className="space-y-2">
-                      {MISMATCH_FILTER_TYPES.map((type) => (
-                        <div key={type} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={type}
-                            checked={mismatchFilters.has(type)}
-                            onCheckedChange={(checked) =>
-                              handleMismatchFilterChange(type, !!checked)
-                            }
-                            disabled={type === 'duplicate_in_shopify'}
-                          />
-                          <Label htmlFor={type} className="font-normal capitalize">
-                            {type.replace(/_/g, ' ')}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
+            <TabsContent value="tag_updates" className="space-y-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-medium">Tag Manager</h3>
+                  <Badge variant="outline" className="ml-2">
+                    {filteredData.length} Products
+                  </Badge>
+                </div>
+
+                <div className="flex flex-1 items-center gap-2 md:max-w-md">
+                  <div className="relative flex-1">
+                    <Input
+                      placeholder="Hide if tags match (e.g. Gamma Powersports)..."
+                      value={filterCustomTag}
+                      onChange={(e) => setFilterCustomTag(e.target.value)}
+                      className="w-full"
+                    />
                   </div>
-                  <Separator />
-                  <div className="p-2">
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="default"
+                    onClick={() => setShowUpdateTagsDialog(true)}
+                    disabled={selectedHandles.size === 0 || isFixing || isAutoUpdatingTags}
+                  >
+                    <Wrench className="mr-2 h-4 w-4" />
+                    Update Tags ({selectedHandles.size})
+                  </Button>
+                  {!isAutoUpdatingTags && (
                     <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full justify-start"
-                      onClick={handleClearAuditMemory}
+                      variant="secondary"
+                      onClick={startAutoTagUpdate}
+                      disabled={isFixing || isAutoRunning || isAutoCreating}
                     >
-                      <Eraser className="mr-2 h-4 w-4" />
-                      Clear remembered fixes
+                      <SquarePlay className="mr-2 h-4 w-4" />
+                      Auto Update Tags
                     </Button>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            )}
-            {filter === 'not_in_csv' && (
-              <Select
-                value={selectedVendor}
-                onValueChange={(value) => {
-                  setCurrentPage(1);
-                  setSelectedVendor(value);
-                }}
-                disabled={isFixing || isAutoRunning || isAutoCreating}
-              >
-                <SelectTrigger className="w-full md:w-[200px]">
-                  <SelectValue placeholder="Filter by vendor..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {uniqueVendors.map((vendor) => (
-                    <SelectItem key={vendor} value={vendor}>
-                      {vendor === 'all' ? 'All Vendors' : vendor}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {selectedHandles.size > 0 && (
+                  )}
+                  {isAutoUpdatingTags && (
+                    <Button
+                      variant="destructive"
+                      onClick={stopAutoTagUpdate}
+                      disabled={isFixing}
+                    >
+                      <SquareX className="mr-2 h-4 w-4" />
+                      Stop Auto Update
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Products Found in Shopify</CardTitle>
+                  <CardDescription>
+                    Select products to overwrite their tags. This will set tags to: CSV Tags (first 3) +
+                    Category + Custom Tag.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[50px]">
+                          <Checkbox
+                            checked={
+                              paginatedHandleKeys.length > 0 &&
+                              paginatedHandleKeys.every((handle) => selectedHandles.has(handle))
+                            }
+                            onCheckedChange={toggleSelectAllPage}
+                            aria-label="Select all on page"
+                          />
+                        </TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead>Current Tags</TableHead>
+                        <TableHead>New Tags Preview</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedHandleKeys.map((handle) => {
+                        const items = filteredGroupedByHandle[handle];
+                        if (!items) return null;
+                        const item = items[0];
+                        const shopifyProduct = item.shopifyProducts[0];
+                        const csvProduct = item.csvProducts[0];
+
+                        if (!shopifyProduct || !csvProduct) return null;
+
+                        const tagSet = new Set<string>();
+
+                        if (item.csvProducts[0].tags) {
+                          item.csvProducts[0].tags
+                            .split(',')
+                            .map((t) => t.trim())
+                            .filter(Boolean)
+                            .slice(0, 3)
+                            .forEach(t => tagSet.add(t));
+                        }
+                        if (csvProduct.category) {
+                          tagSet.add(csvProduct.category.trim());
+                        }
+
+                        const newTags = Array.from(tagSet).join(', ');
+
+                        return (
+                          <TableRow key={handle}>
+                            <TableCell>
+                              <Checkbox
+                                checked={selectedHandles.has(handle)}
+                                onCheckedChange={() => toggleSelection(handle)}
+                                aria-label={`Select ${handle} `}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">{shopifyProduct.name}</div>
+                              <div className="text-xs text-muted-foreground">{shopifyProduct.sku}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="max-w-xs truncate text-xs" title={shopifyProduct.tags || ''}>
+                                {shopifyProduct.tags || '-'}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="max-w-xs truncate text-xs text-blue-600" title={newTags}>
+                                {newTags} + [Custom Tag]
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                  {/* Pagination controls would go here if needed, reusing existing ones */}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {filter !== 'tag_updates' && (
               <>
-                {hasSelectionWithMismatches && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button disabled={isFixing || isAutoRunning || isAutoCreating}>
-                        <Wand2 className="mr-2 h-4 w-4" />
-                        Fix Mismatches ({selectedHandles.size})
-                        <ChevronDown className="ml-2 h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>Bulk Actions</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={() => handleBulkFix()}>
-                        Fix All Mismatches
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuLabel>Fix Specific Field</DropdownMenuLabel>
-                      {Array.from(availableMismatchTypes).map((type) => (
-                        <DropdownMenuItem key={type} onClick={() => handleBulkFix(null, [type])}>
-                          Fix {type.replace(/_/g, ' ')} Only
-                        </DropdownMenuItem>
-                      ))}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setFixDialogHandles(selectedHandles);
-                          setShowFixDialog(true);
+                <div className="mb-4 flex flex-col gap-4 rounded-lg border p-4 md:flex-row">
+                  <div className="relative flex-grow">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Filter by Handle, SKU, or Title..."
+                      value={searchTerm}
+                      onChange={(e) => {
+                        setCurrentPage(1);
+                        setSearchTerm(e.target.value);
+                      }}
+                      className="pl-10"
+                      disabled={isFixing || isAutoRunning || isAutoCreating}
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="single-sku-filter"
+                      checked={filterSingleSku}
+                      onCheckedChange={(checked) => {
+                        setCurrentPage(1);
+                        setFilterSingleSku(!!checked);
+                      }}
+                      disabled={isFixing || isAutoRunning || isAutoCreating}
+                    />
+                    <Label htmlFor="single-sku-filter" className="whitespace-nowrap font-normal">
+                      Show only single SKU products
+                    </Label>
+                  </div>
+                  <Separator orientation="vertical" className="hidden h-auto md:block" />
+                  {filter === 'mismatched' && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="w-full md:w-auto"
+                          disabled={isFixing || isAutoRunning || isAutoCreating}
+                        >
+                          <List className="mr-2 h-4 w-4" />
+                          Filter Mismatches (
+                          {mismatchFilters.size > 0 ? `${mismatchFilters.size} selected` : 'All'})
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-60 p-0">
+                        <div className="p-4">
+                          <h4 className="mb-4 font-medium leading-none">Mismatch Types</h4>
+                          <div className="space-y-2">
+                            {MISMATCH_FILTER_TYPES.map((type) => (
+                              <div key={type} className="flex items-center space-x-2">
+                                <Checkbox
+                                  id={type}
+                                  checked={mismatchFilters.has(type)}
+                                  onCheckedChange={(checked) =>
+                                    handleMismatchFilterChange(type, !!checked)
+                                  }
+                                  disabled={type === 'duplicate_in_shopify'}
+                                />
+                                <Label htmlFor={type} className="font-normal capitalize">
+                                  {type.replace(/_/g, ' ')}
+                                </Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <Separator />
+                        <div className="p-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-full justify-start"
+                            onClick={handleClearAuditMemory}
+                          >
+                            <Eraser className="mr-2 h-4 w-4" />
+                            Clear remembered fixes
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                  {filter === 'not_in_csv' && (
+                    <Select
+                      value={selectedVendor}
+                      onValueChange={(value) => {
+                        setCurrentPage(1);
+                        setSelectedVendor(value);
+                      }}
+                      disabled={isFixing || isAutoRunning || isAutoCreating}
+                    >
+                      <SelectTrigger className="w-full md:w-[200px]">
+                        <SelectValue placeholder="Filter by vendor..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {uniqueVendors.map((vendor) => (
+                          <SelectItem key={vendor} value={vendor}>
+                            {vendor === 'all' ? 'All Vendors' : vendor}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {selectedHandles.size > 0 && (
+                    <>
+                      {hasSelectionWithMismatches && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button disabled={isFixing || isAutoRunning || isAutoCreating}>
+                              <Wand2 className="mr-2 h-4 w-4" />
+                              Fix Mismatches ({selectedHandles.size})
+                              <ChevronDown className="ml-2 h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Bulk Actions</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => handleBulkFix()}>
+                              Fix All Mismatches
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel>Fix Specific Field</DropdownMenuLabel>
+                            {Array.from(availableMismatchTypes).map((type) => (
+                              <DropdownMenuItem key={type} onClick={() => handleBulkFix(null, [type])}>
+                                Fix {type.replace(/_/g, ' ')} Only
+                              </DropdownMenuItem>
+                            ))}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setFixDialogHandles(selectedHandles);
+                                setShowFixDialog(true);
+                              }}
+                            >
+                              Custom Fix...
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                      {hasSelectionWithUnlinkedImages && (
+                        <Button
+                          variant="destructive"
+                          onClick={() => handleBulkDeleteUnlinked()}
+                          disabled={isFixing || isAutoRunning || isAutoCreating}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete Unlinked
+                        </Button>
+                      )}
+                    </>
+                  )}
+                  {filter === 'missing_in_shopify' && selectedHandles.size > 0 && (
+                    <Button
+                      onClick={() => handleBulkCreate()}
+                      disabled={isFixing || isAutoRunning || isAutoCreating}
+                      className="w-full md:w-auto"
+                    >
+                      <PlusCircle className="mr-2 h-4 w-4" />
+                      Create {selectedHandles.size} Selected
+                    </Button>
+                  )}
+                  {filter === 'mismatched' && !isAutoRunning && (
+                    <Button
+                      onClick={startAutoRun}
+                      disabled={isFixing}
+                      className="w-full bg-green-600 text-white hover:bg-green-600/90 md:w-auto"
+                    >
+                      <SquarePlay className="mr-2 h-4 w-4" />
+                      Auto Fix Page
+                    </Button>
+                  )}
+                  {isAutoRunning && (
+                    <Button
+                      onClick={stopAutoRun}
+                      disabled={isFixing}
+                      variant="destructive"
+                      className="w-full md:w-auto"
+                    >
+                      <SquareX className="mr-2 h-4 w-4" />
+                      Stop
+                    </Button>
+                  )}
+                  {filter === 'missing_in_shopify' && !isAutoCreating && (
+                    <Button
+                      onClick={startAutoCreate}
+                      disabled={isFixing}
+                      className="w-full bg-blue-600 text-white hover:bg-blue-600/90 md:w-auto"
+                    >
+                      <SquarePlay className="mr-2 h-4 w-4" />
+                      Auto Create Page
+                    </Button>
+                  )}
+                  {isAutoCreating && (
+                    <Button
+                      onClick={stopAutoCreate}
+                      disabled={isFixing}
+                      variant="destructive"
+                      className="w-full md:w-auto"
+                    >
+                      <SquareX className="mr-2 h-4 w-4" />
+                      Stop
+                    </Button>
+                  )}
+                </div>
+
+                {(filter === 'mismatched' ||
+                  (filter === 'missing_in_shopify' &&
+                    Array.from(selectedHandles).every((h) =>
+                      filteredGroupedByHandle[h]?.every((i) =>
+                        i.mismatches.some((m) => m.missingType === 'product')
+                      )
+                    )) ||
+                  filter === 'all') &&
+                  paginatedHandleKeys.length > 0 && (
+                    <div className="flex items-center border-b border-t bg-muted/50 px-4 py-2">
+                      <Checkbox
+                        ref={selectAllCheckboxRef}
+                        id="select-all-page"
+                        onCheckedChange={(checked) => {
+                          if (isSomeOnPageSelected) {
+                            handleSelectAllOnPage(true);
+                          } else {
+                            handleSelectAllOnPage(!!checked);
+                          }
                         }}
-                      >
-                        Custom Fix...
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-                {hasSelectionWithUnlinkedImages && (
-                  <Button
-                    variant="destructive"
-                    onClick={() => handleBulkDeleteUnlinked()}
-                    disabled={isFixing || isAutoRunning || isAutoCreating}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete Unlinked
-                  </Button>
-                )}
+                        checked={isSomeOnPageSelected ? 'indeterminate' : isAllOnPageSelected}
+                        disabled={isAutoRunning || isAutoCreating}
+                      />
+                      <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
+                        Select all on this page ({paginatedHandleKeys.length} items)
+                      </Label>
+                    </div>
+                  )}
+
+                <div className="rounded-md border">
+                  {paginatedHandleKeys.length > 0 ? (
+                    filter === 'duplicate_in_shopify' ? (
+                      renderDuplicateReport()
+                    ) : (
+                      renderRegularReport()
+                    )
+                  ) : (
+                    <div className="flex h-48 flex-col items-center justify-center text-center text-muted-foreground">
+                      <Search className="mb-4 h-10 w-10" />
+                      <h3 className="text-lg font-semibold text-foreground">No Results Found</h3>
+                      <p>Your search or filter combination returned no results.</p>
+                      <p>Try adjusting your filters or clearing the search term.</p>
+                    </div>
+                  )}
+                </div>
+
               </>
             )}
-            {filter === 'missing_in_shopify' && selectedHandles.size > 0 && (
-              <Button
-                onClick={() => handleBulkCreate()}
-                disabled={isFixing || isAutoRunning || isAutoCreating}
-                className="w-full md:w-auto"
-              >
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Create {selectedHandles.size} Selected
-              </Button>
-            )}
-            {filter === 'mismatched' && !isAutoRunning && (
-              <Button
-                onClick={startAutoRun}
-                disabled={isFixing}
-                className="w-full bg-green-600 text-white hover:bg-green-600/90 md:w-auto"
-              >
-                <SquarePlay className="mr-2 h-4 w-4" />
-                Auto Fix Page
-              </Button>
-            )}
-            {isAutoRunning && (
-              <Button
-                onClick={stopAutoRun}
-                disabled={isFixing}
-                variant="destructive"
-                className="w-full md:w-auto"
-              >
-                <SquareX className="mr-2 h-4 w-4" />
-                Stop
-              </Button>
-            )}
-            {filter === 'missing_in_shopify' && !isAutoCreating && (
-              <Button
-                onClick={startAutoCreate}
-                disabled={isFixing}
-                className="w-full bg-blue-600 text-white hover:bg-blue-600/90 md:w-auto"
-              >
-                <SquarePlay className="mr-2 h-4 w-4" />
-                Auto Create Page
-              </Button>
-            )}
-            {isAutoCreating && (
-              <Button
-                onClick={stopAutoCreate}
-                disabled={isFixing}
-                variant="destructive"
-                className="w-full md:w-auto"
-              >
-                <SquareX className="mr-2 h-4 w-4" />
-                Stop
-              </Button>
-            )}
-          </div>
 
-          {(filter === 'mismatched' ||
-            (filter === 'missing_in_shopify' &&
-              Array.from(selectedHandles).every((h) =>
-                filteredGroupedByHandle[h]?.every((i) =>
-                  i.mismatches.some((m) => m.missingType === 'product')
-                )
-              )) ||
-            filter === 'all') &&
-            paginatedHandleKeys.length > 0 && (
-              <div className="flex items-center border-b border-t bg-muted/50 px-4 py-2">
-                <Checkbox
-                  ref={selectAllCheckboxRef}
-                  id="select-all-page"
-                  onCheckedChange={(checked) => {
-                    if (isSomeOnPageSelected) {
-                      handleSelectAllOnPage(true);
-                    } else {
-                      handleSelectAllOnPage(!!checked);
-                    }
-                  }}
-                  checked={isSomeOnPageSelected ? 'indeterminate' : isAllOnPageSelected}
-                  disabled={isAutoRunning || isAutoCreating}
-                />
-                <Label htmlFor="select-all-page" className="ml-2 text-sm font-medium">
-                  Select all on this page ({paginatedHandleKeys.length} items)
-                </Label>
-              </div>
-            )}
-
-          <div className="rounded-md border">
-            {paginatedHandleKeys.length > 0 ? (
-              filter === 'duplicate_in_shopify' ? (
-                renderDuplicateReport()
-              ) : (
-                renderRegularReport()
-              )
-            ) : (
-              <div className="flex h-48 flex-col items-center justify-center text-center text-muted-foreground">
-                <Search className="mb-4 h-10 w-10" />
-                <h3 className="text-lg font-semibold text-foreground">No Results Found</h3>
-                <p>Your search or filter combination returned no results.</p>
-                <p>Try adjusting your filters or clearing the search term.</p>
-              </div>
-            )}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-end gap-4">
-              <div className="flex items-center gap-2 text-sm">
-                <Label htmlFor="handles-per-page">Items per page</Label>
-                <Select
-                  value={handlesPerPage.toString()}
-                  onValueChange={(value) => {
-                    setHandlesPerPage(Number(value));
-                    setCurrentPage(1);
-                  }}
-                  disabled={isFixing || isAutoRunning || isAutoCreating}
+            {totalPages > 1 && (
+              <div className="mt-4 flex items-center justify-end gap-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <Label htmlFor="handles-per-page">Items per page</Label>
+                  <Select
+                    value={handlesPerPage.toString()}
+                    onValueChange={(value) => {
+                      setHandlesPerPage(Number(value));
+                      setCurrentPage(1);
+                    }}
+                    disabled={isFixing || isAutoRunning || isAutoCreating}
+                  >
+                    <SelectTrigger id="handles-per-page" className="w-20">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[5, 10, 25, 50].map((size) => (
+                        <SelectItem key={size} value={size.toString()}>
+                          {size}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <span className="text-sm text-muted-foreground">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1 || isFixing || isAutoRunning || isAutoCreating}
                 >
-                  <SelectTrigger id="handles-per-page" className="w-20">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[5, 10, 25, 50].map((size) => (
-                      <SelectItem key={size} value={size.toString()}>
-                        {size}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages || isFixing || isAutoRunning || isAutoCreating}
+                >
+                  Next
+                </Button>
               </div>
-              <span className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1 || isFixing || isAutoRunning || isAutoCreating}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                disabled={currentPage === totalPages || isFixing || isAutoRunning || isAutoCreating}
-              >
-                Next
-              </Button>
-            </div>
-          )}
+            )}
+
+          </Tabs>
         </CardContent>
-      </Card>
+      </Card >
       <Dialog open={!!editingMediaFor} onOpenChange={(open) => !open && setEditingMediaFor(null)}>
         <DialogContent className="max-w-5xl">
           {editingMediaFor && (
@@ -2671,6 +3110,18 @@ export default function AuditReport({
           )}
         </DialogContent>
       </Dialog>
+      <UpdateTagsDialog
+        isOpen={showUpdateTagsDialog}
+        onClose={() => setShowUpdateTagsDialog(false)}
+        onConfirm={handleUpdateTags}
+        count={selectedHandles.size}
+      />
+      <UpdateTagsDialog
+        isOpen={showAutoTagDialog}
+        onClose={() => setShowAutoTagDialog(false)}
+        onConfirm={confirmAutoTagUpdate}
+        count={reportData.filter(item => item.shopifyProducts.length > 0).length} // Total count approximation
+      />
       <FixMismatchesDialog
         isOpen={showFixDialog}
         onClose={() => {

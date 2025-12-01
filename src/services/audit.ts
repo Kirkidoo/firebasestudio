@@ -52,9 +52,9 @@ function findMismatches(
   if (csvFileName.toLowerCase().includes('clearance')) {
     const tags = shopifyProduct.tags
       ? shopifyProduct.tags
-          .toLowerCase()
-          .split(',')
-          .map((t) => t.trim())
+        .toLowerCase()
+        .split(',')
+        .map((t) => t.trim())
       : [];
 
     // Check if Price equals Compare At Price (Invalid Clearance)
@@ -81,6 +81,25 @@ function findMismatches(
           shopifyValue: shopifyProduct.templateSuffix || 'Default Template',
         });
       }
+    }
+  }
+
+  // Category Tag Check
+  if (csvProduct.category) {
+    const tags = shopifyProduct.tags
+      ? shopifyProduct.tags
+        .toLowerCase()
+        .split(',')
+        .map((t) => t.trim())
+      : [];
+
+    const categoryLower = csvProduct.category.toLowerCase().trim();
+    if (!tags.includes(categoryLower)) {
+      mismatches.push({
+        field: 'missing_category_tag',
+        csvValue: csvProduct.category,
+        shopifyValue: shopifyProduct.tags || 'No Tags',
+      });
     }
   }
 

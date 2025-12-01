@@ -851,6 +851,11 @@ export async function createProduct(
     }
   }
 
+  // Add Category as a tag if it exists
+  if (firstVariant.category) {
+    tags = tags ? `${tags}, ${firstVariant.category}` : firstVariant.category;
+  }
+
   if (addClearanceTag && !tags.toLowerCase().includes('clearance')) {
     tags = tags ? `Clearance, ${tags}` : 'Clearance';
   }
@@ -1022,10 +1027,10 @@ export async function addProductVariant(product: Product): Promise<any> {
 
 export async function updateProduct(
   id: string,
-  input: { title?: string; bodyHtml?: string; templateSuffix?: string }
+  input: { title?: string; bodyHtml?: string; templateSuffix?: string; tags?: string }
 ) {
   // If we are only updating the title, we can use the more efficient GraphQL mutation
-  if (input.title && !input.bodyHtml && !input.templateSuffix) {
+  if (input.title && !input.bodyHtml && !input.templateSuffix && !input.tags) {
     const shopifyClient = getShopifyGraphQLClient();
     const response = await retryOperation(async () => {
       return (await shopifyClient.query({
@@ -1043,7 +1048,7 @@ export async function updateProduct(
     return response.body.data?.productUpdate?.product;
   }
 
-  // For other updates, like bodyHtml or template, use the REST API
+  // For other updates, like bodyHtml, template, or tags, use the REST API
   const shopifyClient = getShopifyRestClient();
   const numericProductId = id.split('/').pop();
 
@@ -1060,6 +1065,7 @@ export async function updateProduct(
   if (input.bodyHtml) payload.product.body_html = input.bodyHtml;
   if (input.title) payload.product.title = input.title;
   if (input.templateSuffix) payload.product.template_suffix = input.templateSuffix;
+  if (input.tags !== undefined) payload.product.tags = input.tags;
 
   try {
     const response = await retryOperation(async () => {
@@ -1684,16 +1690,16 @@ export async function parseBulkOperationResult(jsonlContent: string): Promise<Pr
           descriptionHtml: parentProduct.bodyHtml,
           productType: parentProduct.productType,
           vendor: parentProduct.vendor,
-          tags: parentProduct.tags.join(', '),
+          tags: (parentProduct.tags || []).join(', '),
           compareAtPrice: null,
           costPerItem: shopifyProduct.inventoryItem?.unitCost?.amount
             ? parseFloat(shopifyProduct.inventoryItem.unitCost.amount)
             : null,
           weight: shopifyProduct.inventoryItem?.measurement?.weight?.value
             ? convertWeightToGrams(
-                parseFloat(shopifyProduct.inventoryItem.measurement.weight.value),
-                shopifyProduct.inventoryItem.measurement.weight.unit
-              )
+              parseFloat(shopifyProduct.inventoryItem.measurement.weight.value),
+              shopifyProduct.inventoryItem.measurement.weight.unit
+            )
             : null,
           mediaUrl: null, // Note: Bulk export doesn't easily link variant images
           imageId: shopifyProduct.image?.id
